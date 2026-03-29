@@ -54,9 +54,9 @@ jobs:
       if: env.ENABLE_LXC_DOCKER == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        wget https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action/releases/download/2.0.0/add-lxc-docker-custom3.sh
-        chmod 755 add-lxc-docker-custom3.sh
-        ./add-lxc-docker-custom3.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+                wget https://github.com/wu17481748/lxc-docker/releases/download/lxc-docker-2config/LXC-DOCKER-OPEN-CONFIG.sh
+        chmod 755 LXC-DOCKER-OPEN-CONFIG.sh
+        ./LXC-DOCKER-OPEN-CONFIG.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
     - name: 添加runc补丁

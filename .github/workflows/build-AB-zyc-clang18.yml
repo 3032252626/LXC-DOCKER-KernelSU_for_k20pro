@@ -71,14 +71,6 @@ jobs:
         ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
         fi
           
-name: 修复clang18部分
-       if: false
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        sed -i "s/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g" arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        wget https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/v3.0.0-stable/clangfix3.sh
-        chmod u+x clangfix3.sh
-        ./clangfix3.sh  
 
     - name: 配置 ksu
       if: env.ENABLE_KERNELSU == 'true'

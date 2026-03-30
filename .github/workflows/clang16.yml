@@ -96,8 +96,8 @@ jobs:
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
-        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        export PATH=$CLANG_PATH:$PATH
+        make -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
         if [ ${{env.LLVM_CONFIG}}=y ]; then
         make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
         else

@@ -24,7 +24,7 @@ jobs:
         cat config.env | grep ENABLE_KVM= >> $GITHUB_ENV
         cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
         cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
-        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
+        cat config.env |grep KERNELSU_Tag= >> $GITHUB_ENV
 
     - name: 构建编译内核环境
       run: |
@@ -33,7 +33,7 @@ jobs:
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
     - name: 切换python2.7
-      if: ${{ env.SWITCH_PYTHON == 'true' }}
+      if: env.SWITCH_PYTHON == 'true'
       run: |
         sudo rm -f /usr/bin/python
         sudo ln -s /usr/bin/python2.7 /usr/bin/python
@@ -49,36 +49,35 @@ jobs:
     - name: 下载内核源码
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone "${{ env.KERNEL_SOURCE }}" -b "${{ env.KERNEL_SOURCE_BRANCH }}" android-kernel --depth=1
+        git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
 
     - name: 开启lxc和docker配置
-      if: ${{ env.ENABLE_LXC_DOCKER == 'true' }}
+      if: env.ENABLE_LXC_DOCKER == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         wget https://github.com/wu17481748/lxc-docker/releases/download/lxc-docker-2config/LXC-DOCKER-OPEN-CONFIG.sh
         chmod 755 LXC-DOCKER-OPEN-CONFIG.sh
         ./LXC-DOCKER-OPEN-CONFIG.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "# CONFIG_ANDROID_PARANOID_NETWORKis not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
     - name: 添加runc补丁
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         wget https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh
         chmod a+x runcpatch.sh
-        if [ -f android-kernel/kernel/cgroup.c ]; then./runcpatch.sh android-kernel/kernel/cgroup.c
+        if [ -f android-kernel/kernel/cgroup.c ]; then
+          ./runcpatch.sh android-kernel/kernel/cgroup.c
         fi
         if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
           ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c
         fi
 
     - name: 配置 ksu
-      if: ${{ env.ENABLE_KERNELSU == 'true' }}
+      if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
-
-    - name: 开启kvm
-      if: ${{ env.ENABLE_KVM == 'true' }}
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}- name: 开启kvm
+      if: env.ENABLE_KVM == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         echo "CONFIG_VIRTUALIZATION=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
@@ -95,12 +94,12 @@ jobs:
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        export PATH="$CLANG_PATH:$PATH"
-        make -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
-          make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
+        export PATH=$CLANG_PATH:$PATH
+        make -j$(nproc--all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        if [ ${{env.LLVM_CONFIG}}=y ]; then
+        make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
         else
-          make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+        make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 SUBARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
         fi
 
     - name: 准备打包内核
@@ -108,17 +107,16 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone https://github.com/osm0sis/AnyKernel3
         sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-        sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
-        sed -i 's/is_slot_device=1;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
+        sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.shsed -i 's/is_slot_device=1;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh
         cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
-        if [ "${{ env.NEED_DTBO }}" = "true" ]; then
-          echo "NEED=true" >> $GITHUB_ENV
-          if [ -f android-kernel/out/arch/arm64/boot/dtbo.img ]; then
-            echo "DTBO_EXIST=true" >> $GITHUB_ENV
-          fi
+        if [ ${{ env.NEED_DTBO }} = true ]; then
+            echo "NEED=true" >> $GITHUB_ENV
+            if [ -f android-kernel/out/arch/arm64/boot/dtbo.img ]; then
+                echo "DTBO_EXIST=true" >> $GITHUB_ENV
+            fi
         fi
-        if [ "${{ env.DTBO_EXIST }}" = "true" ]; then
-          cp android-kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
+        if [ ${{ env.DTBO_EXIST }} = true ]; then
+            cp android-kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
         fi
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
         rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
@@ -130,7 +128,7 @@ jobs:
         path: kernel_workspace/AnyKernel3/*
 
     - name: 上传dtbo镜像
-    if: ${{ env.DTBO_EXIST == 'true' && env.NEED == 'true' }}
+      if: env.DTBO_EXIST == 'true' && env.NEED == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: dtbo-image

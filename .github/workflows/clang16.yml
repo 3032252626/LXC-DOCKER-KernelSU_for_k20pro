@@ -38,11 +38,13 @@ jobs:
        sudo rm -f /usr/bin/python
        sudo ln -s /usr/bin/python2.7 /usr/bin/python
           
-    - name: 下载Clang-aosp编译器
+    - name: 下载Clang编译器
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir clang-aosp
-        git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp
+        wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-16.0.0/clang+llvm-16.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz
+        tar -xf clang+llvm-16.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz
+        mv clang+llvm-16.0.0-x86_64-linux-gnu-ubuntu-18.04 clang-aosp
+        echo "CLANG_PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin" >> $GITHUB_ENV
                           
     - name: 下载内核源码
       run: |

@@ -1,4 +1,4 @@
-name: 高端机 谷歌clang10.0.5
+name: 高端机 谷歌clang11.0.5
 on:
   workflow_dispatch:
 
@@ -41,10 +41,10 @@ jobs:
     - name: 下载Clang编译器
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        # 使用 Clang 12.0.0（更适合 Linux 4.14 内核）
-        wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-12.0.0/clang+llvm-12.0.0-x86_64-linux-gnu-ubuntu-20.04.tar.xz
-        tar -xf clang+llvm-12.0.0-x86_64-linux-gnu-ubuntu-20.04.tar.xz
-        mv clang+llvm-12.0.0-x86_64-linux-gnu-ubuntu-20.04 clang-aosp
+        # 使用 Clang 11.0.0（最兼容的选择）
+        wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-11.0.0/clang+llvm-11.0.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz
+        tar -xf clang+llvm-11.0.0-x86_64-linux-gnu-ubuntu-16.04.tar.xz
+        mv clang+llvm-11.0.0-x86_64-linux-gnu-ubuntu-16.04 clang-aosp
         echo "CLANG_PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin" >> $GITHUB_ENV                      
     
     - name: 下载内核源码

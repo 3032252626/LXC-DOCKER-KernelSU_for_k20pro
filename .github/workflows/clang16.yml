@@ -1,4 +1,4 @@
-name: 高端机 谷歌clang12.0.5
+name: 高端机 谷歌clang10.0.5
 on:
   workflow_dispatch:
 

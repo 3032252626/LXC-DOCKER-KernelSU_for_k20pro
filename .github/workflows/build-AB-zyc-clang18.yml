@@ -118,6 +118,8 @@ jobs:
         sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
         sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=auto;!g' AnyKernel3/anykernel.sh
         sed -i 's/is_slot_device=1;/is_slot_device=auto;/g' AnyKernel3/anykernel.sh        
+        # 将Image压缩为Image.gz以适配MIUICX内核
+        gzip -c android-kernel/out/arch/arm64/boot/Image > android-kernel/out/arch/arm64/boot/Image.gz
         cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
         if [ ${{ env.NEED_DTBO }} = true ]; then
             echo "NEED=true" >> $GITHUB_ENV

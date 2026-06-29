@@ -96,12 +96,12 @@ LXCEOF
     - name: 添加runc补丁
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        # runcpatch.sh removed (404)
+        # runcpatch.sh removed (404) - merging cgroup configs inline
         if [ -f android-kernel/kernel/cgroup.c ]; then
-        # ./runcpatch.sh removed (404)               
+        echo "cgroup.c patch skipped (runcpatch.sh 404)"             
         fi
         if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
-        ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
+        echo "cgroup/cgroup.c patch skipped (runcpatch.sh 404)"             
         fi
     
     - name: 修复clang18部分

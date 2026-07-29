@@ -102,6 +102,8 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin:$PATH
+        export HOSTCC=gcc
+        export HOSTCXX=g++
         export KBUILD_BUILD_HOST=17
         export KBUILD_BUILD_USER=HyperPower
         make -s -j$(nproc --all) O=out ARCH=arm64 DTC=/usr/bin/dtc DTC_FLAGS="-" ${{ env.KERNEL_CONFIG }}

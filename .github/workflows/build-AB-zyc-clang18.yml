@@ -101,12 +101,10 @@ jobs:
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin:$PATH
-        export HOSTCC=gcc
-        export HOSTCXX=g++
         export KBUILD_BUILD_HOST=17
         export KBUILD_BUILD_USER=HyperPower
         make -s -j$(nproc --all) O=out ARCH=arm64 DTC=/usr/bin/dtc DTC_FLAGS="-" ${{ env.KERNEL_CONFIG }}
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin:$PATH
         if [ ${{env.LLVM_CONFIG}}=y ]; then
         make -j$(nproc --all) CONFIG_DEBUG_SECTION_MISMATCH=y CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" DTC=/usr/bin/dtc DTC_FLAGS="-" LLVM=1 LLVM_IAS=1
         else

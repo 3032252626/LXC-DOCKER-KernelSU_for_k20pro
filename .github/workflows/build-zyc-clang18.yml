@@ -134,10 +134,11 @@ jobs:
         key: build-kernel-mido-kernel
         max-size: 2G
 
-    - name: 修复DTC编译
+    - name: 修复源码编译
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+        sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
         
     - name: 开始编译内核
       run: |

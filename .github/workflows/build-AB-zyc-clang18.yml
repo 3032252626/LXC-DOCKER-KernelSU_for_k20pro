@@ -143,6 +143,7 @@ jobs:
         sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
         sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
         sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c
+        sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c
         
     - name: 开始编译内核
       run: |

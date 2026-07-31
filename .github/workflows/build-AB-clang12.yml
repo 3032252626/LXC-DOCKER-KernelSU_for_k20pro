@@ -91,6 +91,11 @@ jobs:
         key: build-kernel-mido-kernel
         max-size: 2G
 
+    - name: 修复DTC编译
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+        
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel

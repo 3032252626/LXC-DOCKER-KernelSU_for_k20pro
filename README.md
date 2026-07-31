@@ -32,6 +32,33 @@
 
 <br>
 
+## LXC-DOCKER 补丁源
+本仓库使用自维护的 LXC-DOCKER 补丁仓库 [3032252626/android-lxc-docker](https://github.com/3032252626/android-lxc-docker)（fork 自 wu17481748），补丁文件包括：
+- `LXC-DOCKER-OPEN-CONFIG.sh` —— LXC/Docker 内核配置脚本
+- `xt_qtaguid.patch` —— qtaguid 网络模块补丁
+
+> `cgroup.patch` 已被移除，因为较新内核源码已内置相关 cgroup 支持，重复打补丁会导致冲突。
+
+<br>
+
+## 修复记录
+
+### 2026-08-01 · raphael (红米 K20 Pro) 内核适配
+
+以下修复针对 `kernel_xiaomi_raphael` 源码，使用 `build-AB-clang14` 工作流（谷歌 clang 14，高端机 A/B 分区）。
+
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `scripts/dtc/Makefile` | 变量 `HOSTLDLIBS_dtc` 在新版 Make 中无效 | 改为 `HOSTLOADLIBES_dtc` |
+| `arch/arm64/mm/hugetlbpage.c` | 结构体成员 `ptep` 不存在 | 改为 `pte` |
+| `fs/btrfs/inode.c` | `struct timespec` 已废弃 | 改为 `struct timespec64` |
+| `fs/btrfs/file.c` | 同上 | 改为 `struct timespec64` |
+| `arch/arm64/configs/raphael_defconfig` | 编译后不生成 `Image.gz` 和 `Image.gz-dtb` | 末尾追加压缩与 dtb 配置项 |
+
+> 编译产物：`raphael_zundamon-fox_lxc-docker_kernel`（约 21.8 MB），支持 KernelSU + LXC-Docker。
+
+<br>
+
 ## 一些修复方法
 ### 关于k30pro内核源码和一加9R的los内核源码，编译完成后，不生成Image.gz和Image.gz-dtb文件
 ### 解决办法

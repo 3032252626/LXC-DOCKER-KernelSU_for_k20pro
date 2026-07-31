@@ -6,6 +6,8 @@
 
 fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/LXC-DOCKER-KernelSU_Action)。
 
+> **声明**：本仓库工作流及补丁体系均源自上游社区，未进行自主开发维护。编译适配、问题排查与修复均由 AI 辅助完成。
+
 ---
 
 ## 一、项目介绍
@@ -16,18 +18,20 @@ fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/L
 `4.9` | `4.14` | `4.19` | `5.4`
 
 ### 补丁体系
-使用自维护的补丁仓库 [android-lxc-docker](https://github.com/3032252626/android-lxc-docker)：
+补丁取自上游社区仓库，本仓库仅做引用整合，通过 AI 排查适配：
 
-| 文件 | 用途 |
-|------|------|
-| `LXC-DOCKER-OPEN-CONFIG.sh` | 向 defconfig 注入 LXC/Docker 内核配置项 |
-| `xt_qtaguid.patch` | qtaguid 网络模块补丁 |
+| 文件 | 来源 | 用途 |
+|------|------|------|
+| `LXC-DOCKER-OPEN-CONFIG.sh` | [android-lxc-docker](https://github.com/3032252626/android-lxc-docker)（fork 自 wu17481748） | 注入 LXC/Docker 内核配置 |
+| `xt_qtaguid.patch` | 同上 | qtaguid 网络模块补丁 |
 
-> `cgroup.patch` 已移除，较新内核源码已内置 cgroup 支持，重复打补丁会导致编译冲突。
+> `cgroup.patch` 已移除 — 较新内核源码已内置 cgroup 支持，重复打补丁会导致编译冲突（由 AI 分析后决策）。
 
 ---
 
 ## 二、快速开始
+
+所有流程沿用上游设计，仅通过 AI 完成机型适配与问题修复。
 
 1. **Fork 本仓库**
 2. **编辑配置** — 打开 `config.env`，按注释修改变量后 Commit
@@ -38,6 +42,8 @@ fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/L
 ---
 
 ## 三、config.env 配置说明
+
+沿用上游变量体系，未做自定义扩展。
 
 | 变量 | 说明 | 示例 |
 |------|------|------|
@@ -58,27 +64,29 @@ fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/L
 
 ## 四、工作流选型
 
+工作流均来自上游或 ego-taboo，本仓库仅做归档整合，适配修改由 AI 完成。
+
 ### 机型分类
 - **高端机（A/B 分区）**：一加 8T、红米 K20 Pro / K30 Pro、小米 10 等 — 选用文件名含 `AB` 的工作流
 - **低端机（非 A/B 分区）**：小米 6、红米 5 Plus、红米 Note4X 等 — 选用不含 `AB` 的工作流
 
 ### 主力工作流
 
-| 工作流文件 | 编译器 | 适用机型 |
-|------------|--------|----------|
-| `build-clang12.yml` | Google clang 12.0.5 | 低端机 |
-| `build-clang14.yml` | Google clang 14 | 低端机 |
-| `build-AB-clang12.yml` | Google clang 12.0.5 | 高端机 |
-| `build-AB-clang14.yml` | Google clang 14 | 高端机 |
-| `build-zyc-clang18.yml` | zyc clang 18 | 低端机 |
-| `build-AB-zyc-clang18.yml` | zyc clang 18 | 高端机 |
-| `build-Mandi-Sa-clang18.yml` | Mandi-Sa clang 18 | 低端机（带 BOLT 优化） |
+| 工作流文件 | 编译器 | 适用机型 | 来源 |
+|------------|--------|----------|------|
+| `build-clang12.yml` | Google clang 12 | 低端机 | 上游 |
+| `build-clang14.yml` | Google clang 14 | 低端机 | 上游 |
+| `build-AB-clang12.yml` | Google clang 12 | 高端机 | 上游 |
+| `build-AB-clang14.yml` | Google clang 14 | 高端机 | 上游（已 AI 适配 raphael） |
+| `build-zyc-clang18.yml` | zyc clang 18 | 低端机 | 上游 |
+| `build-AB-zyc-clang18.yml` | zyc clang 18 | 高端机 | 上游 |
+| `build-Mandi-Sa-clang18.yml` | Mandi-Sa clang 18 | 低端机 | 上游 |
 
-编译失败时优先降级到 clang 14 或 clang 12 重试。
+编译失败时优先降级到 clang 14 或 clang 12 重试，问题排查由 AI 辅助。
 
 ### 旧版工作流（归档）
 
-以下来自 ego-taboo，采用简化 LXC 配置方案。文件名含 `-legacy` 后缀，已归档供参考，不推荐新项目使用：
+来自 ego-taboo，脚本已备份至 [android-lxc-docker/scripts-legacy/](https://github.com/3032252626/android-lxc-docker/tree/main/scripts-legacy)，仅做存档，不推荐新项目使用：
 
 | 工作流文件 | 编译器 | 适用机型 | 说明 |
 |------------|--------|----------|------|
@@ -86,14 +94,14 @@ fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/L
 | `build-zyc-clang23-simplified-universal-legacy` | zyc clang 23 | 低端机 | clang23 + clangfix2 修复 |
 | `build-clang12-simplified-vince-A16-v6-legacy` | Google clang 12 | 红米5 Plus (vince) | vince 专用，含额外驱动仓库 |
 
-> 旧版工作流依赖 `android-lxc-docker/scripts-legacy/` 下的脚本，补丁体系与主力工作流不同。
-
 ---
 
 ## 五、常见编译问题
 
+以下问题及修复方案均来自上游社区经验或 AI 分析，非自主开发。
+
 ### k30pro / 一加9R los 内核不生成 Image.gz
-在 defconfig 末尾追加：
+在 defconfig 末尾追加：（来源：上游社区）
 ```ini
 CONFIG_BUILD_ARM64_KERNEL_COMPRESSION_GZIP=y
 CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y
@@ -101,16 +109,16 @@ CONFIG_BUILD_ARM64_DT_OVERLAY=y
 ```
 
 ### .py 文件报 print 语法错误
-`config.env` 中设置 `SWITCH_PYTHON=true`。
+`config.env` 中设置 `SWITCH_PYTHON=true`。（来源：上游已知问题）
 
 ### DTC 链接报 yaml 未定义
-在编译步骤前执行：
+在编译步骤前执行：（来源：AI 分析 raphael 编译日志）
 ```bash
 sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
 ```
 
 ### struct timespec 与 timespec64 不兼容
-在编译步骤前执行：
+在编译步骤前执行：（来源：AI 分析 raphael 编译日志）
 ```bash
 sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/*.c
 ```
@@ -118,6 +126,8 @@ sed -i 's/struct timespec now = current_time/struct timespec64 now = current_tim
 ---
 
 ## 六、修复记录
+
+以下适配由 AI 辅助分析编译日志完成，非手动逆向。
 
 ### 2026-08-01 — raphael (红米 K20 Pro) 适配
 

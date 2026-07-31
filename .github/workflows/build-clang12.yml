@@ -55,10 +55,8 @@ jobs:
     - name: 添加补丁
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/cgroup.patch
         wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
-        patch -p1 -d android-kernel < cgroup.patch || echo "cgroup.patch already applied"
-        patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch already applied"
+        patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
         
     - name: 配置 ksu
       if: env.ENABLE_KERNELSU == 'true'
@@ -81,10 +79,11 @@ jobs:
         key: build-kernel-mido-kernel
         max-size: 2G
 
-    - name: 修复DTC编译
+    - name: 修复源码编译
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+        sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
         
     - name: 开始编译内核
       run: |

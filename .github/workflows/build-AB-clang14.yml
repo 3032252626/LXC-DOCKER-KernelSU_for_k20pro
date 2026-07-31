@@ -1,4 +1,4 @@
-name: 低端机 谷歌clang14
+name: 高端机 谷歌clang14
 on:
   workflow_dispatch:
 

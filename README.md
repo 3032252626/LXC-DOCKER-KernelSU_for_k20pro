@@ -142,6 +142,8 @@ sed -i 's/struct timespec now = current_time/struct timespec64 now = current_tim
 
 编译产物：`raphael_zundamon-fox_lxc-docker_kernel`（约 21.8 MB）。
 
+> ⚠️ **免责声明**：此产物仅验证编译通过，未在实机上测试开机及功能。LXC/Docker、KernelSU 等模块的实际运行效果未经确认，刷入前请自行备份，风险自负。
+
 ---
 
 ## 七、致谢

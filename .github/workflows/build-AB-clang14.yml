@@ -61,7 +61,7 @@ jobs:
         wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
         patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
         
-    - name: 配置 ksu（非GKI兼容fork，每半月同步上游）
+    - name: 配置 KernelSU v0.9.5（非GKI手动集成方案2）
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -78,46 +78,128 @@ jobs:
          echo "CONFIG_VHOST_NET=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
          echo "CONFIG_VHOST_CROSS_ENDIAN_LEGACY=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
                 
-    - name: 开启kprobe并移植path_umount
+    - name: 手动集成KernelSU源码（方案2）+ path_umount
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "CONFIG_MODULES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        python3 << 'PYEOF'
+with open("fs/exec.c", "r") as f:
+    content = f.read()
+content = content.replace(
+    'static int do_execveat_common(int fd, struct filename *filename,',
+    '#ifdef CONFIG_KSU
+extern bool ksu_execveat_hook __read_mostly;
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+			void *envp, int *flags);
+extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
+				 void *argv, void *envp, int *flags);
+#endif
+static int do_execveat_common(int fd, struct filename *filename,')
+content = content.replace(
+    '	return __do_execve_file(fd, filename, argv, envp, flags, NULL);',
+    '#ifdef CONFIG_KSU
+	if (unlikely(ksu_execveat_hook))
+		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
+	else
+		ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
+#endif
+	return __do_execve_file(fd, filename, argv, envp, flags, NULL);')
+with open("fs/exec.c", "w") as f:
+    f.write(content)
+print("exec.c done")
+
+with open("fs/open.c", "r") as f:
+    content = f.read()
+content = content.replace(
+    'SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)',
+    '#ifdef CONFIG_KSU
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
+			 int *flags);
+#endif
+SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)')
+content = content.replace(
+    '	if (mode & ~S_IRWXO)	/* where''s F_OK, X_OK, W_OK, R_OK? */',
+    '#ifdef CONFIG_KSU
+	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
+#endif
+	if (mode & ~S_IRWXO)	/* where''s F_OK, X_OK, W_OK, R_OK? */')
+with open("fs/open.c", "w") as f:
+    f.write(content)
+print("open.c done")
+
+with open("fs/read_write.c", "r") as f:
+    content = f.read()
+content = content.replace(
+    'ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)',
+    '#ifdef CONFIG_KSU
+extern bool ksu_vfs_read_hook __read_mostly;
+extern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,
+			size_t *count_ptr, loff_t **pos);
+#endif
+ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)')
+content = content.replace(
+    '	if (!(file->f_mode & FMODE_READ))',
+    '#ifdef CONFIG_KSU
+	if (unlikely(ksu_vfs_read_hook))
+		ksu_handle_vfs_read(&file, &buf, &count, &pos);
+#endif
+	if (!(file->f_mode & FMODE_READ))')
+with open("fs/read_write.c", "w") as f:
+    f.write(content)
+print("read_write.c done")
+
+with open("fs/stat.c", "r") as f:
+    content = f.read()
+content = content.replace(
+    'int vfs_statx(int dfd, const char __user *filename, int flags,',
+    '#ifdef CONFIG_KSU
+extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
+#endif
+int vfs_statx(int dfd, const char __user *filename, int flags,')
+content = content.replace(
+    '	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;',
+    '#ifdef CONFIG_KSU
+	ksu_handle_stat(&dfd, &filename, &flags);
+#endif
+	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;')
+with open("fs/stat.c", "w") as f:
+    f.write(content)
+print("stat.c done")
+print("All 4 source files patched for KernelSU manual integration")
+PYEOF
         if [ "${{ env.ENABLE_PATH_UMOUNT }}" = "true" ] && ! grep -q 'int path_umount' fs/namespace.c; then
           cd $GITHUB_WORKSPACE/kernel_workspace
           cat >> android-kernel/fs/namespace.c << 'PATHUMOUNTEOF'
-        static int can_umount(const struct path *path, int flags)
-        {
-        	struct mount *mnt = real_mount(path->mnt);
-        	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
-        		return -EINVAL;
-        	if (!may_mount())
-        		return -EPERM;
-        	if (path->dentry != path->mnt->mnt_root)
-        		return -EINVAL;
-        	if (!check_mnt(mnt))
-        		return -EINVAL;
-        	if (mnt->mnt.mnt_flags & MNT_LOCKED)
-        		return -EINVAL;
-        	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
-        		return -EPERM;
-        	return 0;
-        }
+static int can_umount(const struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+		return -EINVAL;
+	if (!may_mount())
+		return -EPERM;
+	if (path->dentry != path->mnt->mnt_root)
+		return -EINVAL;
+	if (!check_mnt(mnt))
+		return -EINVAL;
+	if (mnt->mnt.mnt_flags & MNT_LOCKED)
+		return -EINVAL;
+	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	return 0;
+}
 
-        int path_umount(struct path *path, int flags)
-        {
-        	struct mount *mnt = real_mount(path->mnt);
-        	int ret;
-        	ret = can_umount(path, flags);
-        	if (!ret)
-        		ret = do_umount(mnt, flags);
-        	dput(path->dentry);
-        	mntput_no_expire(mnt);
-        	return ret;
-        }
-        PATHUMOUNTEOF
+int path_umount(struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	int ret;
+	ret = can_umount(path, flags);
+	if (!ret)
+		ret = do_umount(mnt, flags);
+	dput(path->dentry);
+	mntput_no_expire(mnt);
+	return ret;
+}
+PATHUMOUNTEOF
         fi
 
     - name: 设置ccache缓存

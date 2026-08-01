@@ -81,6 +81,7 @@ jobs:
     - name: 手动集成KernelSU源码（方案2）+ path_umount
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        echo "CONFIG_MODULES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         python3 << 'PYEOF'
 with open("fs/exec.c", "r") as f:

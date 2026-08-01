@@ -10,7 +10,7 @@ fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/L
 
 ### KernelSU 非 GKI 适配
 
-KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维护的 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) fork，该 fork 持续 backport 至 4.4~6.18 内核，并已镜像至 [3032252626/KernelSU](https://github.com/3032252626/KernelSU)，通过 Actions 每半月自动同步上游更新。
+KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维护的 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) fork，该 fork 持续 backport 至 4.4~6.18 内核。
 
 ---
 

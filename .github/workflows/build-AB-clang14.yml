@@ -60,13 +60,13 @@ jobs:
         wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
         patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
         
-    - name: 配置 ksu（rsuntk 非GKI兼容fork）
+    - name: 配置 ksu（非GKI兼容fork，每半月同步上游）
       if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        # rsuntk/KernelSU: 社区维护的非GKI backport，支持4.4~6.18内核
-        # 官方tiann/KernelSU自v1.0起放弃非GKI支持，此fork为推荐替代方案
-        curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
+        # 使用自有fork（3032252626/KernelSU），源自rsuntk/KernelSU非GKI backport
+        # 官方tiann/KernelSU自v1.0起放弃非GKI支持
+        curl -LSs "https://raw.githubusercontent.com/3032252626/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
 
     - name: 开启kvm
       if: env.ENABLE_KVM == 'true'

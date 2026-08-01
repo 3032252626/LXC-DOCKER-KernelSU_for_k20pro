@@ -21,6 +21,7 @@ jobs:
         cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
         cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
         cat config.env | grep ENABLE_KVM= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_PATH_UMOUNT= >> $GITHUB_ENV
         cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
         cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
         cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
@@ -87,36 +88,36 @@ jobs:
         if [ "${{ env.ENABLE_PATH_UMOUNT }}" = "true" ] && ! grep -q 'int path_umount' fs/namespace.c; then
           cd $GITHUB_WORKSPACE/kernel_workspace
           cat >> android-kernel/fs/namespace.c << 'PATHUMOUNTEOF'
-static int can_umount(const struct path *path, int flags)
-{
-	struct mount *mnt = real_mount(path->mnt);
-	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
-		return -EINVAL;
-	if (!may_mount())
-		return -EPERM;
-	if (path->dentry != path->mnt->mnt_root)
-		return -EINVAL;
-	if (!check_mnt(mnt))
-		return -EINVAL;
-	if (mnt->mnt.mnt_flags & MNT_LOCKED)
-		return -EINVAL;
-	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
-		return -EPERM;
-	return 0;
-}
+        static int can_umount(const struct path *path, int flags)
+        {
+        	struct mount *mnt = real_mount(path->mnt);
+        	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+        		return -EINVAL;
+        	if (!may_mount())
+        		return -EPERM;
+        	if (path->dentry != path->mnt->mnt_root)
+        		return -EINVAL;
+        	if (!check_mnt(mnt))
+        		return -EINVAL;
+        	if (mnt->mnt.mnt_flags & MNT_LOCKED)
+        		return -EINVAL;
+        	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
+        		return -EPERM;
+        	return 0;
+        }
 
-int path_umount(struct path *path, int flags)
-{
-	struct mount *mnt = real_mount(path->mnt);
-	int ret;
-	ret = can_umount(path, flags);
-	if (!ret)
-		ret = do_umount(mnt, flags);
-	dput(path->dentry);
-	mntput_no_expire(mnt);
-	return ret;
-}
-PATHUMOUNTEOF
+        int path_umount(struct path *path, int flags)
+        {
+        	struct mount *mnt = real_mount(path->mnt);
+        	int ret;
+        	ret = can_umount(path, flags);
+        	if (!ret)
+        		ret = do_umount(mnt, flags);
+        	dput(path->dentry);
+        	mntput_no_expire(mnt);
+        	return ret;
+        }
+        PATHUMOUNTEOF
         fi
 
     - name: 设置ccache缓存

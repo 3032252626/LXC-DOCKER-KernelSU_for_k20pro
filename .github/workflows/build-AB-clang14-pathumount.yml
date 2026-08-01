@@ -1,0 +1,155 @@
+name: 楂樼鏈?璋锋瓕clang14锛坧ath_umount鍥炵Щ妞嶇増锛?on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: 
+    runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: 鐜鍙橀噺閰嶇疆
+      run: |
+        cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_SOURCE_BRANCH= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_CONFIG= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_ZIP_NAME= >> $GITHUB_ENV
+        cat config.env | grep LLVM_CONFIG= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
+        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KVM= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_PATH_UMOUNT= >> $GITHUB_ENV
+
+    - name: 鏋勫缓缂栬瘧鍐呮牳鐜
+      run: |
+        sudo apt-get update
+        sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+
+    - name: 涓嬭浇Clang-aosp缂栬瘧鍣?      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        mkdir clang-aosp
+        git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp
+    
+    - name: 涓嬭浇鍐呮牳婧愮爜
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
+                  
+    - name: 寮€鍚痩xc鍜宒ocker閰嶇疆
+      if: env.ENABLE_LXC_DOCKER == 'true'
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/LXC-DOCKER-OPEN-CONFIG.sh
+        chmod 755 LXC-DOCKER-OPEN-CONFIG.sh
+        ./LXC-DOCKER-OPEN-CONFIG.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo # CONFIG_ANDROID_PARANOID_NETWORK is not set >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
+    - name: 娣诲姞琛ヤ竵
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
+        patch -p1 -d android-kernel < xt_qtaguid.patch || echo xt_qtaguid.patch not applicable
+        
+    - name: 閰嶇疆KSU锛坮suntk闈濭KI backport锛宮anual hook妯″紡锛?      if: env.ENABLE_KERNELSU == 'true'
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        curl -LSs https://raw.githubusercontent.com/3032252626/KernelSU/main/kernel/setup.sh | bash -s ${{ env.KERNELSU_TAG }}
+
+    - name: 鍥炵Щ妞峱ath_umount锛?.14鍐呮牳闇€瑕侊級
+      if: env.ENABLE_KERNELSU == 'true' && env.ENABLE_PATH_UMOUNT == 'true'
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        NS=fs/namespace.c
+        if grep -q int path_umount $NS; then
+          echo path_umount already exists, skipping
+        else
+          cat >> $NS << 'UMOUNTEOF'
+
+static int can_umount(const struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+		return -EINVAL;
+	if (!may_mount())
+		return -EPERM;
+	if (path->dentry != path->mnt->mnt_root)
+		return -EINVAL;
+	if (!check_mnt(mnt))
+		return -EINVAL;
+	if (mnt->mnt.mnt_flags & MNT_LOCKED)
+		return -EINVAL;
+	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	return 0;
+}
+
+int path_umount(struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+	int ret;
+	ret = can_umount(path, flags);
+	if (!ret)
+		ret = do_umount(mnt, flags);
+	dput(path->dentry);
+	mntput_no_expire(mnt);
+	return ret;
+}
+UMOUNTEOF
+          echo path_umount backported successfully
+        fi
+
+    - name: 寮€鍚痥vm
+      if: env.ENABLE_KVM == 'true'
+      run: |
+         cd $GITHUB_WORKSPACE/kernel_workspace
+         echo CONFIG_VIRTUALIZATION=y >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+         echo CONFIG_KVM=y >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+         echo CONFIG_VHOST_NET=y >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+         echo CONFIG_VHOST_CROSS_ENDIAN_LEGACY=y >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+                
+    - name: 璁剧疆ccache缂撳瓨
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: build-kernel-mido-kernel
+        max-size: 2G
+
+    - name: 淇婧愮爜缂栬瘧
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+        sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
+        sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c
+        sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c
+        
+    - name: 寮€濮嬬紪璇戝唴鏍?      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+        export KBUILD_BUILD_HOST=17
+        export KBUILD_BUILD_USER=HyperPower
+        make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        if [ ${{env.LLVM_CONFIG}}=y ]; then
+        make -j$(nproc --all) CC=ccache clang O=out ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1
+        else
+        make -j$(nproc --all) CC=ccache clang O=out ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        fi
+                
+    - name: 鍑嗗鎵撳寘鍐呮牳
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone https://github.com/osm0sis/AnyKernel3
+        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+        sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+        sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+        cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md
+        rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+    
+    - name: 鎵撳寘骞朵笂浼?      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.KERNEL_ZIP_NAME }}
+        path: kernel_workspace/AnyKernel3/*
+

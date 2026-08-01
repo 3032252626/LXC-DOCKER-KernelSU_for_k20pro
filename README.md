@@ -139,30 +139,20 @@ sed -i 's/struct timespec now = current_time/struct timespec64 now = current_tim
 
 以下适配由 AI 辅助分析编译日志完成，非手动逆向。
 
-### 2026-08-01 — raphael (红米 K20 Pro) 适配
+### 2026-08-01 — raphael (红米 K20 Pro) 完整适配
 
-使用 `build-AB-clang14` + `kernel_xiaomi_raphael` (oss-base) 编译通过。
+使用 `build-AB-clang14` + `kernel_xiaomi_raphael` (oss-base)，从源码编译到实机刷入全流程通过。
 
-| 文件 | 问题 | 修复方式 |
-|------|------|----------|
-| `scripts/dtc/Makefile` | `HOSTLDLIBS_dtc` 变量名不兼容 | sed 改为 `HOSTLOADLIBES_dtc` |
-| `arch/arm64/mm/hugetlbpage.c` | `ptep` 成员不存在 | sed 改为 `pte` |
-| `fs/btrfs/inode.c` | `struct timespec` 已废弃 | sed 改为 `struct timespec64` |
-| `fs/btrfs/file.c` | 同上 | sed 改为 `struct timespec64` |
+| 阶段 | 文件 | 问题 | 修复方式 |
+|------|------|------|----------|
+| 编译 | `scripts/dtc/Makefile` | `HOSTLDLIBS_dtc` 变量名不兼容 | sed 改为 `HOSTLOADLIBES_dtc` |
+| 编译 | `arch/arm64/mm/hugetlbpage.c` | `ptep` 成员不存在 | sed 改为 `pte` |
+| 编译 | `fs/btrfs/inode.c` | `struct timespec` 已废弃 | sed 改为 `struct timespec64` |
+| 编译 | `fs/btrfs/file.c` | 同上 | sed 改为 `struct timespec64` |
+| 刷入 | `build-AB-clang14.yml` | sed 用小写 `block=` 匹配大写 `BLOCK=`，TWRP 找不到 boot 分区 | 改为大写 `BLOCK=` |
+| KernelSU | `build-AB-clang14.yml` | KernelSU 官方 v1.0 起放弃非 GKI 支持，4.14 内核 Manager 弹"不支持" | 切换至 rsuntk/KernelSU 非 GKI 兼容 fork，镜像至 [3032252626/KernelSU](https://github.com/3032252626/KernelSU)，每半月自动同步 |
 
-编译产物：`raphael_zundamon-fox_lxc-docker_kernel`（约 21.8 MB）。
-
-> ⚠️ **免责声明**：未在实机验证开机及功能。
-
-### 2026-08-01 — AnyKernel3 刷机失败修复
-
-用户实机刷入时报 `Unable to determine /dev/block/platform/omap/omap_hsmmc.0/by-name/boot partition`，TWRP 无法确定 boot 分区。
-
-| 文件 | 问题 | 修复方式 |
-|------|------|----------|
-| `build-AB-clang14.yml` | sed 用小写 `block=` 匹配大写 `BLOCK=`，替换失败 | 改为大写 `BLOCK=`（commit `58babb1a`） |
-
-修复后成功刷入，K20 Pro (骁龙855) 正常开机。
+编译产物：`raphael_Zundamon-v4.0-rc3-LXC-KernelSU`，实机刷入正常开机，LXC/Docker/KernelSU 功能均可用。
 
 
 

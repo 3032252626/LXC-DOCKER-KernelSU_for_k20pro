@@ -8,11 +8,15 @@ fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/L
 
 > **声明**：本仓库工作流及补丁体系均源自上游社区，未进行自主开发维护。编译适配、问题排查与修复均由 AI 辅助完成。
 
+### KernelSU 非 GKI 适配
+
+KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维护的 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) fork，该 fork 持续 backport 至 4.4~6.18 内核，并已镜像至 [3032252626/KernelSU](https://github.com/3032252626/KernelSU)，通过 Actions 每日自动同步上游更新。
+
 ---
 
 ## 一、项目介绍
 
-本仓库提供一系列 GitHub Actions 工作流，可一键编译支持 LXC/Docker 容器的安卓内核，同时集成 KernelSU 提权方案。
+本仓库提供一系列 GitHub Actions 工作流，可一键编译支持 LXC/Docker 容器的安卓内核，同时集成 KernelSU 提权方案（通过 rsuntk 非 GKI 兼容 fork）。
 
 ### 支持的内核版本
 `4.9` | `4.14` | `4.19` | `5.4`
@@ -168,7 +172,7 @@ sed -i 's/struct timespec now = current_time/struct timespec64 now = current_tim
 
 - [AnyKernel3](https://github.com/osm0sis/AnyKernel3)
 - [AOSP](https://android.googlesource.com)
-- [KernelSU](https://github.com/tiann/KernelSU)
+- [KernelSU](https://github.com/tiann/KernelSU)（非 GKI 兼容由 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) 提供）
 - [xiaoxindada](https://github.com/xiaoxindada)
 - [xiaoleGun](https://github.com/xiaoleGun/KernelSU_Action)
 - [wu17481748](https://github.com/wu17481748/LXC-DOCKER-KernelSU_Action)

@@ -117,6 +117,12 @@ CONFIG_BUILD_ARM64_DT_OVERLAY=y
 sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
 ```
 
+### AnyKernel3 刷入报 "Unable to determine boot partition"
+根因：工作流中 sed 替换 AnyKernel3 的 BLOCK 路径时，上游 `anykernel.sh` 使用大写变量 `BLOCK=`，若 sed 写为小写 `block=` 则匹配失败，脚本回退到 OMAP 默认路径（`/dev/block/platform/omap/omap_hsmmc.0/by-name/boot`），而骁龙 855 设备没有该路径。修复为匹配大写：（来源：AI 分析 TWRP 刷机日志）
+```bash
+sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+```
+
 ### struct timespec 与 timespec64 不兼容
 在编译步骤前执行：（来源：AI 分析 raphael 编译日志）
 ```bash
@@ -142,7 +148,19 @@ sed -i 's/struct timespec now = current_time/struct timespec64 now = current_tim
 
 编译产物：`raphael_zundamon-fox_lxc-docker_kernel`（约 21.8 MB）。
 
-> ⚠️ **免责声明**：此产物仅验证编译通过，未在实机上测试开机及功能。LXC/Docker、KernelSU 等模块的实际运行效果未经确认，刷入前请自行备份，风险自负。
+> ⚠️ **免责声明**：未在实机验证开机及功能。
+
+### 2026-08-01 — AnyKernel3 刷机失败修复
+
+用户实机刷入时报 `Unable to determine /dev/block/platform/omap/omap_hsmmc.0/by-name/boot partition`，TWRP 无法确定 boot 分区。
+
+| 文件 | 问题 | 修复方式 |
+|------|------|----------|
+| `build-AB-clang14.yml` | sed 用小写 `block=` 匹配大写 `BLOCK=`，替换失败 | 改为大写 `BLOCK=`（commit `58babb1a`） |
+
+修复后成功刷入，K20 Pro (骁龙855) 正常开机。
+
+
 
 ---
 

@@ -62,7 +62,7 @@ KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维
 | `SWITCH_PYTHON` | 是否切换到 Python 2 | `true` / `false` |
 | `NEED_DTBO` | 是否需要 DTBO | `true` / `false` |
 | `ENABLE_KERNELSU` | 是否集成 KernelSU | `true` / `false` |
-| `KERNELSU_TAG` | KernelSU 分支 | `main` |
+| `KERNELSU_TAG` | KernelSU 分支 | `主干` |
 
 ---
 
@@ -150,9 +150,8 @@ sed -i 's/struct timespec now = current_time/struct timespec64 now = current_tim
 | 编译 | `fs/btrfs/inode.c` | `struct timespec` 已废弃 | sed 改为 `struct timespec64` |
 | 编译 | `fs/btrfs/file.c` | 同上 | sed 改为 `struct timespec64` |
 | 刷入 | `build-AB-clang14.yml` | sed 用小写 `block=` 匹配大写 `BLOCK=`，TWRP 找不到 boot 分区 | 改为大写 `BLOCK=` |
-| KernelSU | `build-AB-clang14.yml` | KernelSU 官方 v1.0 起放弃非 GKI 支持，4.14 内核 Manager 弹"不支持" | 切换至 rsuntk/KernelSU 非 GKI 兼容 fork，镜像至 [3032252626/KernelSU](https://github.com/3032252626/KernelSU)，每半月自动同步 |
+| KernelSU | `build-AB-clang14.yml` | KernelSU 官方 v1.0 起放弃非 GKI 支持，4.14 内核 Manager 弹"不支持" | 切换至 rsuntk/KernelSU 非 GKI 兼容 fork |
 
-编译产物：`raphael_Zundamon-v4.0-rc3-LXC-KernelSU`，实机刷入正常开机，LXC/Docker/KernelSU 功能均可用。
 
 
 

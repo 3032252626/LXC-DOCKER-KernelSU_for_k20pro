@@ -28,6 +28,8 @@ KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维
 |------|------|------|
 | `LXC-DOCKER-OPEN-CONFIG.sh` | [android-lxc-docker](https://github.com/3032252626/android-lxc-docker)（fork 自 wu17481748） | 注入 LXC/Docker 内核配置 |
 | `xt_qtaguid.patch` | 同上 | qtaguid 网络模块补丁 |
+| `runcpatch.sh` | [ego-taboo](https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action) | cgroup 运行时补丁（zyc-clang18 工作流使用） |
+| KernelSU `setup.sh` | [tiann/KernelSU](https://github.com/tiann/KernelSU) | KernelSU 驱动集成（kprobe 自动注入） |
 
 > `cgroup.patch` 已移除 — 较新内核源码已内置 cgroup 支持，重复打补丁会导致编译冲突（由 AI 分析后决策）。
 

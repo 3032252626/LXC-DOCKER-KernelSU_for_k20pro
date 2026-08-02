@@ -106,7 +106,13 @@ jobs:
 
         chmod 755 LXC-DOCKER-OPEN-CONFIG.sh
 
-        ./LXC-DOCKER-OPEN-CONFIG.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
+        # 清理重复配置项（避免脚本报 appears more than once）
+        sed -i '/^CONFIG_PID_NS=/d' android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        sed -i '/^CONFIG_BRIDGE_NETFILTER=/d' android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "CONFIG_PID_NS=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "CONFIG_BRIDGE_NETFILTER=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        ./LXC-DOCKER-OPEN-CONFIG.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }} -w
 
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "CONFIG_IP6_NF_IPTABLES=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}

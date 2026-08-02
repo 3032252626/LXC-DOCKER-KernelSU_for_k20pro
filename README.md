@@ -102,44 +102,46 @@ KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维
 
 ## 五、常见编译问题
 
-以下问题及修复方案均来自上游社区经验或 AI 分析，非自主开发。
 
 ### k30pro / 一加9R los 内核不生成 Image.gz
-在 defconfig 末尾追加：（来源：上游社区）
-```ini
+在 defconfig 末尾追加：```ini
 CONFIG_BUILD_ARM64_KERNEL_COMPRESSION_GZIP=y
 CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y
 CONFIG_BUILD_ARM64_DT_OVERLAY=y
 ```
 
 ### .py 文件报 print 语法错误
-`config.env` 中设置 `SWITCH_PYTHON=true`。（来源：上游已知问题）
-
+`config.env` 中设置 `SWITCH_PYTHON=true`
 ### DTC 链接报 yaml 未定义
-在编译步骤前执行：（来源：AI 分析 raphael 编译日志）
 ```bash
 sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
 ```
 
 ### AnyKernel3 刷入报 "Unable to determine boot partition"
-根因：工作流中 sed 替换 AnyKernel3 的 BLOCK 路径时，上游 `anykernel.sh` 使用大写变量 `BLOCK=`，若 sed 写为小写 `block=` 则匹配失败，脚本回退到 OMAP 默认路径（`/dev/block/platform/omap/omap_hsmmc.0/by-name/boot`），而骁龙 855 设备没有该路径。修复为匹配大写：（来源：AI 分析 TWRP 刷机日志）
-```bash
+工作流 sed 须匹配大写 `BLOCK=`（非小写 `block=`）：```bash
 sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
 ```
 
-### struct timespec 与 timespec64 不兼容
-在编译步骤前执行：（来源：AI 分析 raphael 编译日志）
+### struct timespec 与 timespec64 不兼容（clang 14）
 ```bash
-sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/*.c
+sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c fs/btrfs/file.c
+```
+
+### arch/arm64/mm/hugetlbpage.c 编译报错
+```bash
+sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
 ```
 
 ---
 
 ## 六、修复记录
 
-以下适配由 AI 辅助分析编译日志完成，非手动逆向。
+### 2026-08-02 — KernelSU 双方案支持
 
-### 2026-08-01 — raphael (红米 K20 Pro) 完整适配
+- 新增方案2（手动源码补丁），保留方案1（kprobe）为默认
+- 两套工作流独立命名标注（`build-AB-clang14.yml` / `build-AB-clang14-plan2.yml`），config.env 通用，无需切换配置
+
+### 2026-08-01 — raphael (红米 K20 Pro) 初始适配
 
 使用 `build-AB-clang14` + `kernel_xiaomi_raphael` (oss-base)，从源码编译到实机刷入全流程通过。
 
@@ -150,7 +152,7 @@ sed -i 's/struct timespec now = current_time/struct timespec64 now = current_tim
 | 编译 | `fs/btrfs/inode.c` | `struct timespec` 已废弃 | sed 改为 `struct timespec64` |
 | 编译 | `fs/btrfs/file.c` | 同上 | sed 改为 `struct timespec64` |
 | 刷入 | `build-AB-clang14.yml` | sed 用小写 `block=` 匹配大写 `BLOCK=`，TWRP 找不到 boot 分区 | 改为大写 `BLOCK=` |
-| KernelSU | `build-AB-clang14.yml` | KernelSU 官方 v1.0 起放弃非 GKI 支持，4.14 内核 Manager 弹"不支持" | 切换至 rsuntk/KernelSU 非 GKI 兼容 fork |
+| KernelSU | `build-AB-clang14.yml` | 官方 v1.0 起放弃非 GKI，最后支持 v0.9.5 | 固定 tiann/KernelSU v0.9.5 |
 
 
 

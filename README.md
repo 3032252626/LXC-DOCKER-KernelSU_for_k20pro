@@ -2,6 +2,8 @@
 
 基于 GitHub Actions 的安卓内核自动编译工具，集成 KernelSU 与 LXC/Docker 支持。fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/LXC-DOCKER-KernelSU_Action)。
 
+> **声明**：本仓库工作流及补丁体系均源自上游社区，未进行自主开发维护。编译适配、问题排查与修复均由 AI 辅助完成。
+
 ### KernelSU 非 GKI 适配
 
 KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维护的 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) fork（通过 tiann 脚本 v0.9.5 集成），该 fork 持续 backport 至 4.4~6.18 内核。

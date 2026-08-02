@@ -92,13 +92,7 @@ KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维
 
 ### 旧版工作流（归档）
 
-来自 ego-taboo，脚本已备份至 [android-lxc-docker/scripts-legacy/](https://github.com/3032252626/android-lxc-docker/tree/main/scripts-legacy)，仅做存档，不推荐新项目使用：
-
-| 工作流文件 | 编译器 | 适用机型 | 说明 |
-|------------|--------|----------|------|
-| `build-clang12-simplified-v5-legacy` | Google clang 12 | 低端机 | 无 KernelSU，极简配置 |
-| `build-zyc-clang23-simplified-universal-legacy` | zyc clang 23 | 低端机 | clang23 + clangfix2 修复 |
-| `build-clang12-simplified-vince-A16-v6-legacy` | Google clang 12 | 红米5 Plus (vince) | vince 专用，含额外驱动仓库 |
+旧版工作流来自 ego-taboo，脚本已备份至 [android-lxc-docker/scripts-legacy/](https://github.com/3032252626/android-lxc-docker/tree/main/scripts-legacy)，已从本仓库移除，不再维护。
 
 ---
 

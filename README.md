@@ -138,12 +138,12 @@ sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage
 
 ## 六、修复记录
 
-### 2026-08-02 — KernelSU 双方案支持
+### KernelSU 双方案支持
 
 - 新增方案2（手动源码补丁），保留方案1（kprobe）为默认
 - 两套工作流独立命名标注（`build-AB-clang14.yml` / `build-AB-clang14-plan2.yml`），config.env 通用，无需切换配置
 
-### 2026-08-01 — raphael (红米 K20 Pro) 初始适配
+### raphael (红米 K20 Pro) 初始适配
 
 使用 `build-AB-clang14` + `kernel_xiaomi_raphael` (oss-base)，从源码编译到实机刷入全流程通过。
 

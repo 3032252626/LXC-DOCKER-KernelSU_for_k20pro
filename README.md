@@ -1,6 +1,19 @@
+---
+AIGC:
+    Label: "1"
+    ContentProducer: 001191440300708461136T1XGW3
+    ProduceID: 5d83100e3b7cf0b88ba05a598a34dcf0_eba7adf48e9a11f196d8525400f8a581
+    ReservedCode1: QM2FPLVa0AbY+TWctcvRJOBj5z0vlMano7huaFM7fHsa0CtJaK09mG1g9JHUPX7Hkj0xO3/4EVIYsSK5kUQa5m45a4g1qs+xDh5D0apbej8Hv6JQk4fxCa64LlCXvWAFZ15DlEzFDK7V3deUa+1Zh2ZwtzsYPhEgFnBruYfrEETP5a5nOM9wcLCTd84=
+    ContentPropagator: 001191440300708461136T1XGW3
+    PropagateID: 5d83100e3b7cf0b88ba05a598a34dcf0_eba7adf48e9a11f196d8525400f8a581
+    ReservedCode2: QM2FPLVa0AbY+TWctcvRJOBj5z0vlMano7huaFM7fHsa0CtJaK09mG1g9JHUPX7Hkj0xO3/4EVIYsSK5kUQa5m45a4g1qs+xDh5D0apbej8Hv6JQk4fxCa64LlCXvWAFZ15DlEzFDK7V3deUa+1Zh2ZwtzsYPhEgFnBruYfrEETP5a5nOM9wcLCTd84=
+---
+
 # LXC-DOCKER-KernelSU_Action
 
 基于 GitHub Actions 的安卓内核自动编译工具，集成 KernelSU 与 LXC/Docker 支持。fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/LXC-DOCKER-KernelSU_Action)。
+
+> **声明**：本仓库工作流及补丁体系均源自上游社区，未进行自主开发维护。编译适配、问题排查与修复均由 AI 辅助完成。
 
 ### KernelSU 非 GKI 适配
 
@@ -129,3 +142,4 @@ sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/b
 - [Droidspaces-OSS](https://github.com/ravindu644/Droidspaces-OSS)
 - [xiaoleGun](https://github.com/xiaoleGun/KernelSU_Action)
 - [xiaoxindada](https://github.com/xiaoxindada)
+*（内容由AI生成，仅供参考）*

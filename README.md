@@ -6,139 +6,166 @@
 
 fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/LXC-DOCKER-KernelSU_Action)。
 
----
+> **声明**：本仓库工作流及补丁体系均源自上游社区，未进行自主开发维护。编译适配、问题排查与修复均由 AI 辅助完成。
 
-## KernelSU 集成方案
+### KernelSU 非 GKI 适配
 
-KernelSU 官方自 v1.0 起放弃非 GKI 内核支持（最后支持版本 v0.9.5）。本仓库提供两种集成方案，KSU 内核模块均使用 tiann/KernelSU v0.9.5。
-
-### 方案对比
-
-| | 方案1：kprobe（默认） | 方案2：手动源码补丁 |
-|---|---|---|
-| **原理** | 通过 kprobe 运行时注册探针 hook 内核函数 | 编译前向内核源码插入 `#ifdef CONFIG_KSU` 钩子 |
-| **开机速度** | 偏慢（kprobe 初始化开销） | 快 |
-| **维护成本** | 低 | 需维护 4 个内核文件的补丁 |
-| **工作流** | `build-AB-clang14.yml` | `build-AB-clang14-plan2.yml` |
-| **配置要求** | `CONFIG_KPROBES=y` | `CONFIG_KSU=y`，关闭 `CONFIG_KPROBES` |
-
-> 红米 K20 Pro (raphael, 4.14 内核) 推荐方案1。方案2 开机更快但需随内核源码更新维护补丁。
+KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库改用社区维护的 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) fork，该 fork 持续 backport 至 4.4~6.18 内核。
 
 ---
 
-## 快速开始
+## 一、项目介绍
+
+本仓库提供一系列 GitHub Actions 工作流，可一键编译支持 LXC/Docker 容器的安卓内核，同时集成 KernelSU 提权方案（通过 rsuntk 非 GKI 兼容 fork）。
+
+### 支持的内核版本
+`4.9` | `4.14` | `4.19` | `5.4`
+
+### 补丁体系
+补丁取自上游社区仓库，本仓库仅做引用整合，通过 AI 排查适配：
+
+| 文件 | 来源 | 用途 |
+|------|------|------|
+| `LXC-DOCKER-OPEN-CONFIG.sh` | [android-lxc-docker](https://github.com/3032252626/android-lxc-docker)（fork 自 wu17481748） | 注入 LXC/Docker 内核配置 |
+| `xt_qtaguid.patch` | 同上 | qtaguid 网络模块补丁 |
+
+> `cgroup.patch` 已移除 — 较新内核源码已内置 cgroup 支持，重复打补丁会导致编译冲突（由 AI 分析后决策）。
+
+---
+
+## 二、快速开始
+
+所有流程沿用上游设计，仅通过 AI 完成机型适配与问题修复。
 
 1. **Fork 本仓库**
-2. **编辑** `config.env` 按需修改后 Commit
-3. **选择工作流** → Actions → 触发编译
-4. **下载产物** 刷入
+2. **编辑配置** — 打开 `config.env`，按注释修改变量后 Commit
+3. **选择工作流** — 上方菜单 Actions → All workflows，根据机型选择
+4. **触发编译** — Run workflow → 确认
+5. **下载产物** — 编译完成后从 Artifacts 下载刷入
 
 ---
 
-## config.env 配置
+## 三、config.env 配置说明
+
+沿用上游变量体系，未做自定义扩展。
 
 | 变量 | 说明 | 示例 |
 |------|------|------|
-| `KERNEL_SOURCE` | 内核源码仓库 | `https://github.com/xxx/kernel_xxx` |
-| `KERNEL_SOURCE_BRANCH` | 源码分支 | `oss-base` |
+| `KERNEL_SOURCE` | 内核源码仓库地址 | `https://github.com/xxx/kernel_xxx` |
+| `KERNEL_SOURCE_BRANCH` | 内核源码分支 | `oss-base` |
 | `KERNEL_CONFIG` | defconfig 文件名 | `raphael_defconfig` |
-| `KERNEL_ZIP_NAME` | 产物名 | `raphael_lxc-kernel` |
-| `ENABLE_KVM` | 开启 KVM | `true` / `false` |
-| `ENABLE_LXC_DOCKER` | 开启 LXC/Docker | `true` / `false` |
-| `ENABLE_KERNELSU` | 集成 KernelSU | `true` / `false` |
-| `KERNELSU_TAG` | KSU 分支 | `main` |
-| `ENABLE_PATH_UMOUNT` | path_umount 回移植 | `true` |
-| `KERNEL_IMAGE_NAME` | 镜像类型 | `Image.gz` / `Image.gz-dtb` |
-| `LLVM_CONFIG` | LLVM=1 | `y` / `n` |
+| `KERNEL_ZIP_NAME` | 产物命名 | `raphael_lxc-docker_kernel` |
+| `ENABLE_KVM` | 是否开启 KVM | `true` / `false` |
+| `ENABLE_LXC_DOCKER` | 是否开启 LXC/Docker | `true` / `false` |
+| `KERNEL_IMAGE_NAME` | 打包镜像类型 | `Image.gz` / `Image.gz-dtb` / `Image` |
+| `LLVM_CONFIG` | 是否启用 LLVM=1 | `y` / `n` |
+| `SWITCH_PYTHON` | 是否切换到 Python 2 | `true` / `false` |
+| `NEED_DTBO` | 是否需要 DTBO | `true` / `false` |
+| `ENABLE_KERNELSU` | 是否集成 KernelSU | `true` / `false` |
+| `KERNELSU_TAG` | KernelSU 分支 | `主干` |
 
 ---
 
-## 工作流选型
+## 四、工作流选型
+
+工作流均来自上游或 ego-taboo，本仓库仅做归档整合，适配修改由 AI 完成。
 
 ### 机型分类
-- **A/B 分区（高端机）**：红米 K20 Pro / K30 Pro、一加 8T、小米 10 等 — 选文件名含 `AB` 的工作流
-- **非 A/B 分区（低端机）**：小米 6、红米 5 Plus 等 — 选不含 `AB` 的工作流
+- **高端机（A/B 分区）**：一加 8T、红米 K20 Pro / K30 Pro、小米 10 等 — 选用文件名含 `AB` 的工作流
+- **低端机（非 A/B 分区）**：小米 6、红米 5 Plus、红米 Note4X 等 — 选用不含 `AB` 的工作流
 
-### raphael 主力工作流
+### 主力工作流
 
-| 文件 | 方案 | 说明 |
-|------|------|------|
-| `build-AB-clang14.yml` | **方案1 kprobe（推荐）** | 默认 |
-| `build-AB-clang14-plan2.yml` | 方案2 手动源码补丁 | 开机更快，维护成本高 |
+| 工作流文件 | 编译器 | 适用机型 | 来源 |
+|------------|--------|----------|------|
+| `build-clang12.yml` | Google clang 12 | 低端机 | 上游 |
+| `build-clang14.yml` | Google clang 14 | 低端机 | 上游 |
+| `build-AB-clang12.yml` | Google clang 12 | 高端机 | 上游 |
+| `build-AB-clang14.yml` | Google clang 14 | 高端机 | 上游（已 AI 适配 raphael） |
+| `build-zyc-clang18.yml` | zyc clang 18 | 低端机 | 上游 |
+| `build-AB-zyc-clang18.yml` | zyc clang 18 | 高端机 | 上游 |
+| `build-Mandi-Sa-clang18.yml` | Mandi-Sa clang 18 | 低端机 | 上游 |
 
-### 其他工作流
+编译失败时优先降级到 clang 14 或 clang 12 重试，问题排查由 AI 辅助。
 
-| 文件 | 编译器 | 机型 |
-|------|--------|------|
-| `build-clang12.yml` | clang 12 | 低端机 |
-| `build-clang14.yml` | clang 14 | 低端机 |
-| `build-AB-clang12.yml` | clang 12 | 高端机 |
-| `build-AB-zyc-clang18.yml` | zyc clang 18 | 高端机 |
-| `build-zyc-clang18.yml` | zyc clang 18 | 低端机 |
-| `build-Mandi-Sa-clang18.yml` | Mandi-Sa clang 18 | 低端机 |
+### 旧版工作流（归档）
+
+来自 ego-taboo，脚本已备份至 [android-lxc-docker/scripts-legacy/](https://github.com/3032252626/android-lxc-docker/tree/main/scripts-legacy)，仅做存档，不推荐新项目使用：
+
+| 工作流文件 | 编译器 | 适用机型 | 说明 |
+|------------|--------|----------|------|
+| `build-clang12-simplified-v5-legacy` | Google clang 12 | 低端机 | 无 KernelSU，极简配置 |
+| `build-zyc-clang23-simplified-universal-legacy` | zyc clang 23 | 低端机 | clang23 + clangfix2 修复 |
+| `build-clang12-simplified-vince-A16-v6-legacy` | Google clang 12 | 红米5 Plus (vince) | vince 专用，含额外驱动仓库 |
 
 ---
 
-## 常见编译问题
+## 五、常见编译问题
 
-### DTC 链接报 yaml 未定义
-```bash
-sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
-```
+以下问题及修复方案均来自上游社区经验或 AI 分析，非自主开发。
 
-### struct timespec 与 timespec64 不兼容（clang 14）
-```bash
-sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c fs/btrfs/file.c
-```
-
-### arch/arm64/mm/hugetlbpage.c 编译报错
-```bash
-sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
-```
-
-### TWRP 刷入报 "Unable to determine boot partition"
-确保工作流 sed 匹配大写 `BLOCK=`（非小写 `block=`）：
-```bash
-sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
-```
-
-### k30pro / 一加9R 不生成 Image.gz
-在 defconfig 追加：
+### k30pro / 一加9R los 内核不生成 Image.gz
+在 defconfig 末尾追加：（来源：上游社区）
 ```ini
 CONFIG_BUILD_ARM64_KERNEL_COMPRESSION_GZIP=y
 CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y
 CONFIG_BUILD_ARM64_DT_OVERLAY=y
 ```
 
+### .py 文件报 print 语法错误
+`config.env` 中设置 `SWITCH_PYTHON=true`。（来源：上游已知问题）
+
+### DTC 链接报 yaml 未定义
+在编译步骤前执行：（来源：AI 分析 raphael 编译日志）
+```bash
+sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+```
+
+### AnyKernel3 刷入报 "Unable to determine boot partition"
+根因：工作流中 sed 替换 AnyKernel3 的 BLOCK 路径时，上游 `anykernel.sh` 使用大写变量 `BLOCK=`，若 sed 写为小写 `block=` 则匹配失败，脚本回退到 OMAP 默认路径（`/dev/block/platform/omap/omap_hsmmc.0/by-name/boot`），而骁龙 855 设备没有该路径。修复为匹配大写：（来源：AI 分析 TWRP 刷机日志）
+```bash
+sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+```
+
+### struct timespec 与 timespec64 不兼容
+在编译步骤前执行：（来源：AI 分析 raphael 编译日志）
+```bash
+sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/*.c
+```
+
 ---
 
-## 修复记录
+## 六、修复记录
 
-### 2026-08-02 — KernelSU 双方案支持
+以下适配由 AI 辅助分析编译日志完成，非手动逆向。
 
-- 新增方案2（手动源码补丁，开机更快），保留方案1（kprobe）为默认
-- 两套工作流独立命名标注，config.env 通用，无需切换配置
+### 2026-08-01 — raphael (红米 K20 Pro) 完整适配
 
-### 2026-08-01 — raphael (K20 Pro) 初始适配
+使用 `build-AB-clang14` + `kernel_xiaomi_raphael` (oss-base)，从源码编译到实机刷入全流程通过。
 
-使用 `build-AB-clang14` + `kernel_xiaomi_raphael` (oss-base)，编译到实机刷入全流程通过。
+| 阶段 | 文件 | 问题 | 修复方式 |
+|------|------|------|----------|
+| 编译 | `scripts/dtc/Makefile` | `HOSTLDLIBS_dtc` 变量名不兼容 | sed 改为 `HOSTLOADLIBES_dtc` |
+| 编译 | `arch/arm64/mm/hugetlbpage.c` | `ptep` 成员不存在 | sed 改为 `pte` |
+| 编译 | `fs/btrfs/inode.c` | `struct timespec` 已废弃 | sed 改为 `struct timespec64` |
+| 编译 | `fs/btrfs/file.c` | 同上 | sed 改为 `struct timespec64` |
+| 刷入 | `build-AB-clang14.yml` | sed 用小写 `block=` 匹配大写 `BLOCK=`，TWRP 找不到 boot 分区 | 改为大写 `BLOCK=` |
+| KernelSU | `build-AB-clang14.yml` | KernelSU 官方 v1.0 起放弃非 GKI 支持，4.14 内核 Manager 弹"不支持" | 切换至 rsuntk/KernelSU 非 GKI 兼容 fork |
 
-| 文件 | 问题 | 修复 |
-|------|------|------|
-| `scripts/dtc/Makefile` | `HOSTLDLIBS_dtc` 不兼容 | sed → `HOSTLOADLIBES_dtc` |
-| `arch/arm64/mm/hugetlbpage.c` | `ptep` 不存在 | sed → `pte` |
-| `fs/btrfs/inode.c` `file.c` | `struct timespec` 废弃 | sed → `timespec64` |
-| AnyKernel3 | 小写 `block=` 匹配失败 | 改为大写 `BLOCK=` |
+
+
 
 ---
 
-## 致谢
+## 七、致谢
 
 - [AnyKernel3](https://github.com/osm0sis/AnyKernel3)
-- [KernelSU](https://github.com/tiann/KernelSU)
-- [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU)（非 GKI backport）
+- [AOSP](https://android.googlesource.com)
+- [KernelSU](https://github.com/tiann/KernelSU)（非 GKI 兼容由 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) 提供）
+- [xiaoxindada](https://github.com/xiaoxindada)
 - [xiaoleGun](https://github.com/xiaoleGun/KernelSU_Action)
 - [wu17481748](https://github.com/wu17481748/LXC-DOCKER-KernelSU_Action)
-- [xiaoxindada](https://github.com/xiaoxindada)
+- [qiuqiu](https://github.com/lateautumn233)
 - [zyc clang](https://github.com/ZyCromerZ/Clang)
 - [Mandi-Sa](https://github.com/Mandi-Sa/clang)
+- [ego-taboo](https://github.com/ego-taboo)

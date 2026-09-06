@@ -10,7 +10,7 @@
 |------|------|
 | 设备 | Redmi K20 Pro 尊享版（raphael，4.14 非 GKI 内核） |
 | 内核 | `4.14.357-Zundamon-v4.1-LXC`（oss-base 分支） |
-| 容器 | Droidspaces（Debian13 容器） |
+| 容器 | Droidspaces |
 | 管理器 | KernelSU 非 GKI 版（官方 v0.9.5 或 rsuntk legacy） |
 
 ### KernelSU 非 GKI 适配说明

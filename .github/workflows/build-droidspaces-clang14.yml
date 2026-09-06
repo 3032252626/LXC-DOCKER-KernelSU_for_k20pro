@@ -45,6 +45,8 @@ jobs:
         cat config.env | grep ENABLE_PATH_UMOUNT= >> $GITHUB_ENV
 
         cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KEEPALIVE= >> $GITHUB_ENV
+
 
         cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
 
@@ -124,6 +126,7 @@ jobs:
         patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
 
     - name: 应用 keepalive 防息屏冻结补丁
+      if: env.ENABLE_KEEPALIVE == 'true'
 
       run: |
 

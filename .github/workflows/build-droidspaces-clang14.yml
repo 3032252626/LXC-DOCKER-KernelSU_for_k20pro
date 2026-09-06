@@ -224,7 +224,7 @@ jobs:
 
         echo "=== 补丁应用完毕 ==="
 
-    - name: 配置 ksu（方案1：非GKI兼容fork）
+    - name: 配置 ksu（方案1：kprobe）
 
       if: env.ENABLE_KERNELSU == 'true'
 
@@ -232,9 +232,9 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        # 使用自有fork（3032252626/KernelSU），源自rsuntk/KernelSU非GKI backport
+        # KernelSU 由官方 tiann/KernelSU setup.sh 动态注入，固定 v0.9.5（非 GKI 版本）
 
-        # 官方tiann/KernelSU自v1.0起放弃非GKI支持
+        # 非 GKI 适配由下方「配置KernelSU kprobe（方案1）」步骤补齐
 
         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
 

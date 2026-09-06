@@ -130,11 +130,42 @@ jobs:
 
       run: |
 
-        cd $GITHUB_WORKSPACE/kernel_workspace
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/keepalive.patch
+        # 直接注入 keepalive.c 源码（内嵌方式，避免 patch 上下文不匹配导致静默失败）
+        cat > drivers/misc/keepalive.c << 'KEEPALIVEEOF'
+        // SPDX-License-Identifier: GPL-2.0
+        /*
+         * keepalive.c - 内核级防息屏冻结：注册 wakeup source 禁止自动 suspend
+         */
+        #include <linux/init.h>
+        #include <linux/kernel.h>
+        #include <linux/module.h>
+        #include <linux/wakeup_source.h>
+        static struct wakeup_source *no_suspend_ws;
+        static int __init keepalive_init(void)
+        {
+        	no_suspend_ws = wakeup_source_create("PowerManagerService.noSuspend");
+        	if (!no_suspend_ws)
+        		return -ENOMEM;
+        	wakeup_source_add(no_suspend_ws);
+        	__pm_stay_awake(no_suspend_ws);
+        	pr_info("keepalive: no-suspend wakeup source active, auto-suspend disabled\n");
+        	return 0;
+        }
+        device_initcall(keepalive_init);
+        MODULE_LICENSE("GPL v2");
+        MODULE_AUTHOR("3032252626");
+        MODULE_DESCRIPTION("Keep CPU awake to prevent DroidSpaces auto-suspend");
+        KEEPALIVEEOF
 
-        patch -p1 -d android-kernel < keepalive.patch && echo "[OK] keepalive.patch applied" || echo "[WARN] keepalive.patch not applicable (check conflict)"
+        # 将 keepalive.o 挂入 drivers/misc 编译（已存在则跳过）
+        grep -q "keepalive.o" drivers/misc/Makefile || echo "obj-y += keepalive.o" >> drivers/misc/Makefile
+
+        # 确认注入结果，杜绝静默失败
+        grep -n "keepalive" drivers/misc/Makefile
+        head -3 drivers/misc/keepalive.c
+        echo "[OK] keepalive builtin driver injected"
 
     - name: Droidspaces Non-GKI 内核配置补充
 

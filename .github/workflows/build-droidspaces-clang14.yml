@@ -144,7 +144,7 @@ jobs:
         #include <linux/init.h>
         #include <linux/kernel.h>
         #include <linux/module.h>
-        #include <linux/wakeup_source.h>
+        #include <linux/pm_wakeup.h>
         #include <linux/notifier.h>
         #ifdef CONFIG_FB
         #include <linux/fb.h>

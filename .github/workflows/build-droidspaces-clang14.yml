@@ -132,20 +132,18 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        # 直接注入 keepalive v2 源码（条件化 + sysfs 软开关，内嵌避免 patch 静默失败）
+        # 直接注入 keepalive v2.1 源码（纯屏幕跟随，无手动开关；内嵌避免 patch 静默失败）
         cat > drivers/misc/keepalive.c << 'KEEPALIVEEOF'
         // SPDX-License-Identifier: GPL-2.0
         /*
-         * keepalive.c - 内核级防息屏冻结（v2 条件化 + sysfs 软开关）
-         * v2 变更：新增 /sys/module/keepalive/parameters/control
-         *   0=off 全程释放(禁防冻结,A/B对照) 1=auto 跟随屏幕(默认) 2=on 全时持锁
-         * 默认 auto：亮屏时释放 wakeup source，WiFi/P2P 走标准电源路径，
-         * 互传发送恢复正常；息屏仍持锁保住容器防冻结。
+         * keepalive.c - 内核级防息屏冻结（屏幕跟随模式）
+         * 息屏(FB_BLANK)持锁禁 auto-suspend，容器防冻结；
+         * 亮屏(FB_UNBLANK)释放锁，WiFi/P2P 走标准电源路径，
+         * 修复旧版无条件持锁致小米互传 P2P 发送失败。
          */
         #include <linux/init.h>
         #include <linux/kernel.h>
         #include <linux/module.h>
-        #include <linux/moduleparam.h>
         #include <linux/wakeup_source.h>
         #include <linux/notifier.h>
         #ifdef CONFIG_FB
@@ -154,22 +152,9 @@ jobs:
         static struct wakeup_source *no_suspend_ws;
         static DEFINE_SPINLOCK(keepalive_lock);
         static bool screen_is_off;
-        static int keepalive_control = 1; /* 0=off 1=auto 2=on */
         static void keepalive_recalc(void)
         {
-        	bool hold;
-        	switch (keepalive_control) {
-        	case 0:
-        		hold = false;
-        		break;
-        	case 2:
-        		hold = true;
-        		break;
-        	default:
-        		hold = screen_is_off;
-        		break;
-        	}
-        	if (hold) {
+        	if (screen_is_off) {
         		if (no_suspend_ws && !no_suspend_ws->active_count)
         			__pm_stay_awake(no_suspend_ws);
         	} else {
@@ -177,29 +162,6 @@ jobs:
         			__pm_relax(no_suspend_ws);
         	}
         }
-        static int keepalive_control_set(const char *val,
-        				 const struct kernel_param *kp)
-        {
-        	int ret;
-        	ret = param_set_int(val, kp);
-        	if (ret)
-        		return ret;
-        	if (keepalive_control < 0)
-        		keepalive_control = 0;
-        	if (keepalive_control > 2)
-        		keepalive_control = 2;
-        	pr_info("keepalive: control set to %d (%s)\n", keepalive_control,
-        		keepalive_control == 0 ? "off" :
-        		keepalive_control == 1 ? "auto" : "on");
-        	keepalive_recalc();
-        	return 0;
-        }
-        static const struct kernel_param_ops keepalive_control_ops = {
-        	.set = keepalive_control_set,
-        	.get = param_get_int,
-        };
-        module_param_cb(control, &keepalive_control_ops, &keepalive_control, 0644);
-        MODULE_PARM_DESC(control, "0=off(no hold) 1=auto(screen) 2=on(always hold)");
         #ifdef CONFIG_FB
         static int keepalive_fb_notifier(struct notifier_block *nb,
         				 unsigned long event, void *data)
@@ -230,16 +192,15 @@ jobs:
         	register_fb_notifier(&keepalive_fb_nb);
         #endif
         	keepalive_recalc();
-        	pr_info("keepalive: v2 loaded, control=%d (%s)\n", keepalive_control,
-        		keepalive_control == 0 ? "off" :
-        		keepalive_control == 1 ? "auto" : "on");
+        	pr_info("keepalive: loaded (screen-following mode), auto-suspend managed\n");
         	return 0;
         }
         device_initcall(keepalive_init);
         MODULE_LICENSE("GPL v2");
         MODULE_AUTHOR("3032252626");
-        MODULE_DESCRIPTION("Keep CPU awake to prevent auto-suspend (v2 sysfs control)");
+        MODULE_DESCRIPTION("Keep CPU awake on screen-off to prevent auto-suspend (screen-following)");
         KEEPALIVEEOF
+
 
         # 将 keepalive.o 挂入 drivers/misc 编译（已存在则跳过）
         grep -q "keepalive.o" drivers/misc/Makefile || echo "obj-y += keepalive.o" >> drivers/misc/Makefile

@@ -190,7 +190,7 @@ jobs:
         		return -ENOMEM;
         	wakeup_source_add(no_suspend_ws);
         #ifdef CONFIG_FB
-        	register_fb_notifier(&keepalive_fb_nb);
+        	fb_register_client(&keepalive_fb_nb);
         #endif
         	keepalive_recalc();
         	pr_info("keepalive: loaded (screen-following mode), auto-suspend managed\n");

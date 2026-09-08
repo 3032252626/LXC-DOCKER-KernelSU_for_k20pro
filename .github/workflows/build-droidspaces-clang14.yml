@@ -125,7 +125,7 @@ jobs:
 
         patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
 
-    - name: 应用 keepalive 防息屏冻结补丁 (v2.2 屏态跟随: 息屏持锁/亮屏释放)
+    - name: 应用 keepalive 防息屏冻结补丁 (v2.2 屏态跟随-息屏持锁/亮屏释放)
       if: env.ENABLE_KEEPALIVE == 'true'
 
       run: |

@@ -125,48 +125,86 @@ jobs:
 
         patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
 
-    - name: 应用 keepalive 防息屏冻结补丁
+    - name: 应用 keepalive 防息屏冻结补丁 (v2.2 屏态跟随: 息屏持锁/亮屏释放)
       if: env.ENABLE_KEEPALIVE == 'true'
 
       run: |
-
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        # 直接注入 keepalive.c 源码（内嵌方式，避免 patch 上下文不匹配导致静默失败）
+        # ===== 1) 写入 keepalive.c (v2.2 屏随版, 默认释放, 息屏由 SDE 钩子持锁) =====
         cat > drivers/misc/keepalive.c << 'KEEPALIVEEOF'
         // SPDX-License-Identifier: GPL-2.0
         /*
-         * keepalive.c - 内核级防息屏冻结：注册 wakeup source 禁止自动 suspend
+         * keepalive.c - 内核级防息屏冻结补丁 (v2.2 屏态跟随版)
+         *
+         * 由 SDE 面板电源切换点 keepalive_set_screen() 同步屏态：
+         *   息屏(DPMS OFF/STANDBY/SUSPEND) -> __pm_stay_awake 持锁, CPU 不休眠
+         *   亮屏(DPMS ON)                 -> __pm_relax 释放, 恢复待机省电
+         * 根治 DroidSpaces/LXC 容器息屏后整机冻结, 同时消除 V1 永久持锁的
+         * 待机耗电发热与 WiFi/P2P 电源路径异常副作用。
          */
         #include <linux/init.h>
         #include <linux/kernel.h>
         #include <linux/module.h>
         #include <linux/device.h>
         #include <linux/pm_wakeup.h>
+
         static struct wakeup_source *no_suspend_ws;
+        static bool screen_awake = true; /* true=亮屏(释放), false=息屏(持锁) */
+
+        void keepalive_set_screen(bool screen_on)
+        {
+        	if (!no_suspend_ws)
+        		return;
+        	if (screen_on == screen_awake)
+        		return;
+        	if (!screen_on) {
+        		__pm_stay_awake(no_suspend_ws);
+        		screen_awake = false;
+        		pr_info("keepalive v2.2: screen OFF -> stay awake (auto-suspend disabled)\n");
+        	} else {
+        		__pm_relax(no_suspend_ws);
+        		screen_awake = true;
+        		pr_info("keepalive v2.2: screen ON -> wakelock released (suspend enabled)\n");
+        	}
+        }
+        EXPORT_SYMBOL(keepalive_set_screen);
+
         static int __init keepalive_init(void)
         {
         	no_suspend_ws = wakeup_source_create("PowerManagerService.noSuspend");
         	if (!no_suspend_ws)
         		return -ENOMEM;
         	wakeup_source_add(no_suspend_ws);
-        	__pm_stay_awake(no_suspend_ws);
-        	pr_info("keepalive: no-suspend wakeup source active, auto-suspend disabled\n");
+        	pr_info("keepalive v2.2: screen-follow wk ready (released, waits for SDE DPMS)\n");
         	return 0;
         }
         device_initcall(keepalive_init);
+
         MODULE_LICENSE("GPL v2");
         MODULE_AUTHOR("3032252626");
-        MODULE_DESCRIPTION("Keep CPU awake to prevent DroidSpaces auto-suspend");
+        MODULE_DESCRIPTION("v2.2 screen-follow: hold on screen-off, release on screen-on");
         KEEPALIVEEOF
 
-        # 将 keepalive.o 挂入 drivers/misc 编译（已存在则跳过）
+        # ===== 2) 挂入 drivers/misc 编译 =====
         grep -q "keepalive.o" drivers/misc/Makefile || echo "obj-y += keepalive.o" >> drivers/misc/Makefile
 
-        # 确认注入结果，杜绝静默失败
+        # ===== 3) 注入 SDE connector 屏态钩子 (幂等定点改写) =====
+        # 3a. 函数定义前注入 extern 声明 (已存在则跳过)
+        if ! grep -q "keepalive_set_screen" drivers/gpu/drm/msm/sde/sde_connector.c; then
+          awk '/^static int _sde_connector_update_power_locked\(struct sde_connector \*c_conn\)$/ { print "extern void keepalive_set_screen(bool screen_on);" } { print }' drivers/gpu/drm/msm/sde/sde_connector.c > /tmp/keepalive_sde.c && mv /tmp/keepalive_sde.c drivers/gpu/drm/msm/sde/sde_connector.c
+        fi
+
+        # 3b. "if (mode != SDE_MODE_DPMS_ON)" 前注入屏态跟随调用 (仅注入一次)
+        if ! grep -q "keepalive_set_screen(mode" drivers/gpu/drm/msm/sde/sde_connector.c; then
+          awk 'BEGIN { done=0 } /^[[:space:]]*if \(mode != SDE_MODE_DPMS_ON\)[[:space:]]*$/ && !done { print "	/* keepalive v2.2: screen-follow - off=hold / on=release */"; print "	keepalive_set_screen(mode == SDE_MODE_DPMS_ON);"; done=1 } { print }' drivers/gpu/drm/msm/sde/sde_connector.c > /tmp/keepalive_sde2.c && mv /tmp/keepalive_sde2.c drivers/gpu/drm/msm/sde/sde_connector.c
+        fi
+
+        # ===== 4) 回显确认, 杜绝静默失败 =====
         grep -n "keepalive" drivers/misc/Makefile
+        grep -n "keepalive" drivers/gpu/drm/msm/sde/sde_connector.c
         head -3 drivers/misc/keepalive.c
-        echo "[OK] keepalive builtin driver injected"
+        echo "[OK] keepalive v2.2 (screen-follow) injected: keepalive.c + sde_connector hook"
 
     - name: Droidspaces Non-GKI 内核配置补充
 

@@ -62,6 +62,9 @@ jobs:
 
       run: |
 
+        # 禁用 runner 镜像自带 google-chrome apt 源，避免 Hash Sum mismatch 导致 apt 失败
+        sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome-stable.list 2>/dev/null || true
+
         sudo apt-get update
 
         sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi

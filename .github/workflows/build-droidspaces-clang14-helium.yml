@@ -52,7 +52,7 @@ jobs:
 
         cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
 
-        echo "KERNEL_SOURCE=https://github.com/3032252626/kernel_xiaomi_raphael_Helium-Studio" >> $GITHUB_ENV
+        echo "KERNEL_SOURCE=https://github.com/3032252626/kernel_xiaomi_raphael" >> $GITHUB_ENV
 
         echo "KERNEL_SOURCE_BRANCH=oss-base" >> $GITHUB_ENV
 

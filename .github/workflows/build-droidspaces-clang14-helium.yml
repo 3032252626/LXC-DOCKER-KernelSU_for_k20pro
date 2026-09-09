@@ -70,7 +70,7 @@ jobs:
 
     
 
-    - name: 下载Clang-aosp编译器
+    - name: 下载Clang-aosp编译器 (clang-r596125 = clang 22.0.2 对齐ROM)
 
       run: |
 
@@ -78,7 +78,9 @@ jobs:
 
         mkdir clang-aosp
 
-        git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp
+        wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r596125.tar.gz -O clang-r596125.tar.gz
+        tar -xzf clang-r596125.tar.gz -C clang-aosp
+        ./clang-aosp/bin/clang --version || true
 
     
 
@@ -425,7 +427,7 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/bin:$PATH
 
         export KBUILD_BUILD_HOST=17
 

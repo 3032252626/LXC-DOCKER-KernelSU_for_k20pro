@@ -62,8 +62,9 @@ jobs:
 
       run: |
 
-        # 剔除 runner 镜像所有指向 dl.google.com 的 apt 源（google-chrome 源 Hash Sum mismatch），避免 apt 失败
-        sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+        # 清空 runner 镜像第三方 apt 源目录（google-chrome 等 Hash Sum mismatch），仅保留 Ubuntu 官方源
+        sudo rm -rf /etc/apt/sources.list.d 2>/dev/null || true
+        sudo mkdir -p /etc/apt/sources.list.d
 
         sudo apt-get update
 

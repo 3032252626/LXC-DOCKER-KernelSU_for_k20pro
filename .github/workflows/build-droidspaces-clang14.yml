@@ -26,6 +26,8 @@ jobs:
 
       run: |
 
+        sed -i 's/\r$//' config.env
+
         cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
 
         cat config.env | grep KERNEL_SOURCE_BRANCH= >> $GITHUB_ENV

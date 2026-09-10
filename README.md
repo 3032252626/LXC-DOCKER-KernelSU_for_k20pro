@@ -2,7 +2,7 @@
 
 基于 GitHub Actions 的安卓内核自动编译工具，集成 KernelSU 与 LXC/Docker 支持。fork 自 [wu17481748/LXC-DOCKER-KernelSU_Action](https://github.com/wu17481748/LXC-DOCKER-KernelSU_Action)。
 
-> **声明**：本仓库工作流框架与大部分补丁源自上游社区，编译适配、问题排查与修复均由 AI 辅助完成；其中「防息屏冻结（keepalive）」补丁为本仓库自主开发，以构建期内嵌注入方式维护（详见「防息屏冻结补丁」章节）。
+> **声明**：本仓库工作流框架与大部分补丁源自上游社区，编译适配、问题排查与修复均由 AI 辅助完成。
 
 ### 实测环境
 
@@ -15,9 +15,13 @@
 
 ### KernelSU 非 GKI 适配说明
 
-KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库默认工作流通过官方 [tiann/KernelSU](https://github.com/tiann/KernelSU) 的 `setup.sh` 集成 **v0.9.5**（最后支持非 GKI 的版本），配套使用 v0.9.5 管理器。
+KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库全部工作流通过官方 [tiann/KernelSU](https://github.com/tiann/KernelSU) 的 `setup.sh` 集成 **v0.9.5**（最后支持非 GKI 的版本），配套使用 v0.9.5 管理器。工作流内注入命令固定为：
 
-如需新版 v3.x 协议（支持 Android 16 等），可改用社区维护的 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) backport fork（持续 backport 至 4.4~6.18 内核），注入 legacy tag 并配套使用 rsuntk legacy 管理器。
+```bash
+curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
+```
+
+如需新版 v3.x 协议（支持 Android 16 等），可改用社区维护的 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) backport fork（持续 backport 至 4.4~6.18 内核），注入 legacy tag 并配套使用 rsuntk legacy 管理器（如 `bash -s v3.2.2-10-legacy`）。
 
 > **注意**：非 GKI 设备切勿使用 rsuntk 的 `main` 分支注入（其跟随官方 v3.x GKI 代码），否则编出的 KSU 模块无法被任何管理器识别。
 
@@ -39,7 +43,6 @@ KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库默认工作流
 | `xt_qtaguid.patch` | 同上 | qtaguid 网络模块补丁 |
 | Droidspaces 补丁 01/02 | [Droidspaces-OSS](https://github.com/ravindu644/Droidspaces-OSS) | Non-GKI xt_qtaguid panic 修复 + cgroup 前缀处理 |
 | `setup.sh` (v0.9.5) | [tiann/KernelSU](https://github.com/tiann/KernelSU) | KernelSU 驱动集成（最后非 GKI 版） |
-| `keepalive.c`（构建期内嵌注入） | 自主开发 | 防息屏冻结补丁（v2.2 屏态跟随，见「防息屏冻结补丁」章节） |
 
 ---
 
@@ -60,27 +63,24 @@ KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库默认工作流
 | `KERNEL_SOURCE` | 内核源码仓库 | `https://github.com/3032252626/kernel_xiaomi_raphael` |
 | `KERNEL_SOURCE_BRANCH` | 内核源码分支 | `oss-base` |
 | `KERNEL_CONFIG` | defconfig 文件名 | `raphael_defconfig` |
-| `KERNEL_ZIP_NAME` | 产物 zip 命名 | `raphael_Zundamon-v4.1-LXC-KernelSU-rsuntk` |
+| `KERNEL_ZIP_NAME` | 产物 zip 命名 | `raphael_Zundamon-v4.1-LXC-KernelSU-tiann` |
 | `KERNEL_IMAGE_NAME` | 打包的内核镜像 | `Image.gz` |
 | `LLVM_CONFIG` | 是否启用 LLVM=1 / LLVM_IAS=1 | `n` |
 | `ENABLE_KVM` | 是否开启 KVM | `false` |
 | `ENABLE_LXC_DOCKER` | 是否开启 LXC/Docker | `true` |
-| `ENABLE_KEEPALIVE` | 是否启用 keepalive 防息屏冻结补丁（息屏 CPU 冻结根治） | `true` |
 | `ENABLE_KERNELSU` | 是否集成 KernelSU | `true` |
-| `KERNELSU_TAG` | KernelSU 注入参考标签（方案1实际注入版本以工作流内 `bash -s` 为准） | `main` |
+| `KERNELSU_TAG` | KernelSU 注入参考标签（实际注入版本以工作流内 `bash -s` 为准，固定 v0.9.5） | `main` |
 | `ENABLE_PATH_UMOUNT` | 是否启用 path_umount | `true` |
 | `SWITCH_PYTHON` | 是否切换 python2（一般不需要） | `false` |
 | `NEED_DTBO` | 是否需要 dtbo（一般不需要） | `false` |
 
-> 注：方案1 工作流内 KernelSU 注入命令固定为 `bash -s v0.9.5`，`KERNELSU_TAG` 仅作记录参考；如需更换注入版本（如改用 rsuntk legacy），须直接修改工作流中对应 `curl | bash -s <tag>` 一行。
-
-> 注：`ENABLE_KEEPALIVE` 由工作流内 `cat config.env | grep ENABLE_KEEPALIVE=` 读取到 `$GITHUB_ENV`，供「应用 keepalive 防息屏冻结补丁」步骤的 `if: env.ENABLE_KEEPALIVE == 'true'` 门控。
+> 注：方案1 工作流内 KernelSU 注入命令固定为 `bash -s v0.9.5`（tiann 官方 setup.sh），`KERNELSU_TAG` 仅作记录参考；如需更换注入版本（如改用 rsuntk legacy），须直接修改工作流中对应 `curl | bash -s <tag>` 一行。
 
 ---
 
 ## 四、工作流选型
 
-### 常规编译
+### 常规编译（高端机 A/B 分区，非 Droidspaces 专用）
 
 | 工作流 | 编译器 | 方案 |
 |--------|--------|------|
@@ -93,38 +93,16 @@ Droidspaces 工作流在常规编译基础上额外注入 Non-GKI 必需的内�
 
 | 工作流 | 编译器 | 方案 |
 |--------|--------|------|
-| `build-droidspaces-clang14.yml` | Google clang 14 | 方案1 - kprobe（默认） |
+| `build-droidspaces-clang14.yml` | Google clang 14 | 方案1 - kprobe（默认主力） |
 | `build-droidspaces-clang14-plan2.yml` | Google clang 14 | 方案2 - 手动源码补丁 |
 
-> 方案1（kprobe）与方案2（手动源码补丁）二选一即可，config.env 通用。
+> 方案1（kprobe）与方案2（手动源码补丁）二选一即可，config.env 通用。全部工作流均打包 `Image.gz-dtb` 到 AnyKernel3。
 
 ---
 
-## 五、防息屏冻结补丁（keepalive）
+## 五、防息屏冻结补丁（keepalive，已移除）
 
-本仓库针对 Droidspaces 容器在息屏后设备陷入深度睡眠、定时任务/脚本被冻结不执行的问题，自主开发了内核级防息屏冻结补丁。由 `ENABLE_KEEPALIVE=true` 开关控制（默认开启）。
-
-### 方案演进
-
-| 版本 | 做法 | 状态 |
-|------|------|------|
-| V1 | 模块加载即永久持有 wakelock 防冻结 | 已废弃（待机功耗高、干扰正常休眠与电源路径） |
-| v2.1 | 基于 FB notifier 监听亮灭屏回调 | 已废弃（本设备 SDE DRM 栈下 FB notifier 回调永不可达） |
-| v2.2 | 屏态跟随：以 `sde_connector.c::_sde_connector_update_power_locked` 为唯一屏态切换点，息屏持锁 / 亮屏释放 | 现行方案（Run 34226355334 编译通过并已刷入验证） |
-
-### 注入方式（构建期自动完成，内核源码仓零改动）
-
-1. heredoc 直写 `drivers/misc/keepalive.c`：导出 `keepalive_set_screen(bool)`，busy-wait 不附带无条件持锁，初始为释放态，经 `device_initcall` 注册；
-2. 在 `drivers/misc/Makefile` 追加 `obj-y += keepalive.o`（已存在则跳过，幂等）；
-3. awk 幂等注入两处 SDE 钩子：
-   - 在 `_sde_connector_update_power_locked(...)` 定义前插入 `extern void keepalive_set_screen(bool screen_on);`
-   - 在 `if (mode != SDE_MODE_DPMS_ON)` 之前插入 `keepalive_set_screen(mode == SDE_MODE_DPMS_ON);`
-
-### 验证方法
-
-- 开机日志：`su -c 'dmesg | grep keepalive'`，应看到 `keepalive v2.2: screen-follow wk ready (released, waits for SDE DPMS)`；
-- 屏态跟随：息屏输出 `screen OFF -> stay awake (auto-suspend disabled)`，亮屏输出 `screen ON -> wakelock released (suspend enabled)`，多轮交替出现即正常；
-- 端到端：在 Droidspaces 面板设置每 5 分钟定时任务，息屏期间准点执行即证明防冻结生效（面板/青龙任务均不再被息屏冻结）。
+> 本仓库此前自主开发的「防息屏冻结（keepalive）」补丁（v2.2 屏态跟随版，构建期 heredoc 注入 `drivers/misc/keepalive.c` + `sde_connector.c` 钩子，由 `ENABLE_KEEPALIVE` 开关控制）已于 2026-09 移除：补丁注入步骤、`ENABLE_KEEPALIVE` 配置项及对应工作流副本已全部清理（包括原 `build-droidspaces-clang14-helium.yml` 工作流）。当前仓库不再包含任何防息屏冻结相关代码，容器防冻结可借助 Droidspaces 自身机制或其它方案。
 
 ---
 

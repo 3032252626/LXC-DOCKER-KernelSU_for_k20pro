@@ -23,8 +23,6 @@ jobs:
         cat config.env | grep ENABLE_KVM= >> $GITHUB_ENV
         cat config.env | grep ENABLE_PATH_UMOUNT= >> $GITHUB_ENV
         cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
-        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
-        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
 
     - name: 构建编译内核环境
       run: |

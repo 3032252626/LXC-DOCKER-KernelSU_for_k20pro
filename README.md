@@ -66,8 +66,6 @@ android-lxc-docker           ←  LXC/Docker 配置注入脚本与补丁
 
 **KernelSU 管理器报"只支持 GKI"**：本仓库注入的是 v0.9.5（驱动版本 11872），必须配 v0.9.5 管理器；不要用官方 v3.x 管理器。
 
-**刷入后卡开机**：先确认用的是本仓库编译的 AnyKernel3 包，而不是内核源码仓库里自己改出来的版本——内核源码仓库已回退到上游基线，本地魔改（sde_rsc/dsi 等）曾导致卡 MI logo，已全部丢弃。
-
 **AnyKernel3 报 "Unable to determine boot partition"**：workflow 里已用 sed 把 `BLOCK=` 路径改为 `/dev/block/bootdevice/by-name/boot`，自己改 AnyKernel3 时注意。
 
 ## 致谢

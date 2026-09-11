@@ -197,6 +197,11 @@ jobs:
         check_add CONFIG_NF_CONNTRACK_IPV4 y
         check_add CONFIG_NF_NAT_IPV4 y
         check_add CONFIG_IP_NF_NAT y
+        check_add CONFIG_DEVPTS_MULTIPLE_INSTANCES y
+        check_add CONFIG_MEMCG_KMEM y
+        check_add CONFIG_BINFMT_MISC y
+        check_add CONFIG_NETFILTER_XT_MATCH_CGROUP y
+        check_add CONFIG_RESOURCE_COUNTERS y
 
         echo ""
         echo "=== 配置补充完成：新增 $added 项，跳过 $skipped 项 ==="

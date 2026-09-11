@@ -142,7 +142,7 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        # 使用自有fork（3032252626/KernelSU），源自rsuntk/KernelSU非GKI backport
+
 
         # 官方tiann/KernelSU自v1.0起放弃非GKI支持
 
@@ -215,7 +215,7 @@ jobs:
 
       with:
 
-        key: build-kernel-mido-kernel
+        key: raphael-kernel
 
         max-size: 2G
 

@@ -1,4 +1,4 @@
-name: TEST - No sed fixes clang22
+name: Droidspaces Non-GKI 谷歌clang14 [方案1-kprobe]
 
 on:
 
@@ -68,12 +68,9 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace
 
-        mkdir -p clang-aosp/clang-r596125
+        mkdir clang-aosp
 
-        wget -qL -O clang-r596125.tar.gz https://github.com/MrShockWAVEog/Google-Clang-Mirror/releases/download/clang-r596125-aosp/clang.tar.gz
-        tar -xzf clang-r596125.tar.gz -C clang-aosp/clang-r596125
-        rm -f clang-r596125.tar.gz
-        clang-aosp/clang-r596125/bin/clang --version
+        git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp
 
     
 
@@ -253,7 +250,7 @@ jobs:
 
         # 非 GKI 适配由下方「配置KernelSU kprobe（方案1）」步骤补齐
 
-        echo "SKIP: KernelSU-Next (testing pure kernel first)"
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
 
     - name: 开启kvm
 
@@ -328,7 +325,13 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        sed -i "/yamltree/d" scripts/dtc/Makefile && sed -i "/HOSTLDLIBS_dtc/d" scripts/dtc/Makefile && rm -f scripts/dtc/yamltree.c && echo "HOST_EXTRACFLAGS += -DNO_YAML" >> scripts/dtc/Makefile && sed -i "/pte_t \*pte = NULL;/a\		pte_t *ptep = NULL;" arch/arm64/mm/hugetlbpage.c
+        sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+
+        sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
+
+        sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c
+
+        sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c
 
         
 
@@ -338,7 +341,7 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r596125/bin:$PATH
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
 
         export KBUILD_BUILD_HOST=17
 
@@ -348,7 +351,7 @@ jobs:
 
         if [ ${{env.LLVM_CONFIG}}=y ]; then
 
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1 KCFLAGS="-Wno-error=incompatible-pointer-types -Wno-error=incompatible-function-pointer-types"
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
 
         else
 
@@ -364,17 +367,19 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace
 
-        git clone -b raphael-split_dtb --depth=1 https://github.com/Helium-Studio/AnyKernel3
+        git clone -b raphael-split_dtb https://github.com/Helium-Studio/AnyKernel3
 
-        
-        
-        
-        cp android-kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
+        echo using author split_dtb AK3
+
+
+
+
+
+        cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+
         echo "NOT copying dtb - split_boot keeps ROM's original dtb"
 
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
-
-        rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
 
     
 
@@ -386,6 +391,6 @@ jobs:
 
       with:
 
-        name: raphael_Zundamon-test-nodtb
+        name: ${{ env.KERNEL_ZIP_NAME }}
 
         path: kernel_workspace/AnyKernel3/*

@@ -71,7 +71,7 @@ jobs:
         mkdir -p clang-aosp/clang-r596125
 
         wget -qL -O clang-r596125.tar.gz https://github.com/MrShockWAVEog/Google-Clang-Mirror/releases/download/clang-r596125-aosp/clang.tar.gz
-        tar -xzf clang-r596125.tar.gz -C clang-aosp/clang-r596125 --strip-components=1
+        tar -xzf clang-r596125.tar.gz -C clang-aosp/clang-r596125
         rm -f clang-r596125.tar.gz
         clang-aosp/clang-r596125/bin/clang --version
 

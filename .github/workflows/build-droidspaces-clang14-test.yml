@@ -389,6 +389,6 @@ jobs:
 
       with:
 
-        name: raphael_Zundamon-test-yamlfix
+        name: raphael_Zundamon-test-soviet
 
         path: kernel_workspace/AnyKernel3/*

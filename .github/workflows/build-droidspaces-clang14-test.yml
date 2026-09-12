@@ -370,10 +370,7 @@ jobs:
         
         
         cp android-kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
-        DTB_FILE=$(find android-kernel/out/arch/arm64/boot/dts -name "*raphael*.dtb" | head -1)
-        if [ -z "$DTB_FILE" ]; then DTB_FILE=$(find android-kernel/out/arch/arm64/boot/dts -name "*.dtb" | head -1); fi
-        echo "Using DTB: $DTB_FILE"
-        cp "$DTB_FILE" AnyKernel3/dtb
+        echo "NOT copying dtb - split_boot keeps ROM's original dtb"
 
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
 
@@ -389,6 +386,6 @@ jobs:
 
       with:
 
-        name: raphael_Zundamon-test-soviet
+        name: raphael_Zundamon-test-nodtb
 
         path: kernel_workspace/AnyKernel3/*

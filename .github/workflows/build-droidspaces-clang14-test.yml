@@ -328,7 +328,7 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        sed -i "/yamltree/d" scripts/dtc/Makefile && sed -i "/HOSTLDLIBS_dtc/d" scripts/dtc/Makefile && rm -f scripts/dtc/yamltree.c && echo "HOST_EXTRACFLAGS += -DNO_YAML" >> scripts/dtc/Makefile && cat scripts/dtc/Makefile | grep -i yaml
+        sed -i "/yamltree/d" scripts/dtc/Makefile && sed -i "/HOSTLDLIBS_dtc/d" scripts/dtc/Makefile && rm -f scripts/dtc/yamltree.c && echo "HOST_EXTRACFLAGS += -DNO_YAML" >> scripts/dtc/Makefile && sed -i "/pte_t \*pte = NULL;/a\		pte_t *ptep = NULL;" arch/arm64/mm/hugetlbpage.c
 
         
 

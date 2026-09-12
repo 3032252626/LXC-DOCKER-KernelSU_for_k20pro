@@ -1,4 +1,4 @@
-name: TEST - Droidspaces clang22 KSU-Next
+name: TEST - Droidspaces clang22 NO-KSU
 
 on:
 
@@ -253,7 +253,7 @@ jobs:
 
         # 非 GKI 适配由下方「配置KernelSU kprobe（方案1）」步骤补齐
 
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+        echo "SKIP: KernelSU-Next (testing pure kernel first)"
 
     - name: 开启kvm
 
@@ -393,6 +393,6 @@ jobs:
 
       with:
 
-        name: raphael_Zundamon-test-ksunext
+        name: raphael_Zundamon-test-noksu
 
         path: kernel_workspace/AnyKernel3/*

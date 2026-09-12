@@ -1,0 +1,161 @@
+name: TEST - xiziphus recipe
+
+permissions:
+  contents: read
+  actions: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      KERNEL_DIR: kernel
+      CLANG_DIR: /home/runner/clang
+      CCACHE_DIR: /home/runner/.ccache
+      KBUILD_BUILD_USER: HyperPower
+      KBUILD_BUILD_HOST: github-actions
+
+    steps:
+      - name: Checkout our repo
+        uses: actions/checkout@v4
+
+      - name: Checkout xiziphus scripts
+        run: |
+          git clone --depth=1 https://github.com/xiziphus/kernel_xiaomi_raphael_antigravity.git /tmp/xiziphus
+          cp -r /tmp/xiziphus/scripts /tmp/scripts
+          cp /tmp/xiziphus/docker.config /tmp/docker.config
+          cp /tmp/xiziphus/AnyKernel3/anykernel.sh /tmp/anykernel.sh
+
+      - name: Free up disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/graalvm /usr/local/share/powershell /usr/share/swift \
+            /usr/local/lib/node_modules /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/chromium /usr/local/share/boost 2>/dev/null || true
+          sudo apt-get clean
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libelf-dev libssl-dev ccache \
+            lz4 zip unzip python3 cpio wget git \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            libyaml-dev
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.ccache
+          key: ccache-xiziphus-${{ github.run_id }}
+          restore-keys: ccache-xiziphus-
+
+      - name: Fetch Clang r522817
+        run: |
+          mkdir -p "$CLANG_DIR"
+          curl -fL --retry 3 -o /tmp/clang.tar.gz \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz"
+          tar -xzf /tmp/clang.tar.gz -C "$CLANG_DIR"
+          rm -f /tmp/clang.tar.gz
+          "$CLANG_DIR/bin/clang" --version | head -2
+
+      - name: Clone SOVIET kernel source
+        run: |
+          git clone --depth=1 -b 16.0 \
+            https://github.com/SOVIET-ANDROID/kernel_xiaomi_raphael.git "$KERNEL_DIR"
+          git -C "$KERNEL_DIR" submodule update --init --depth 1 --recursive 2>/dev/null || true
+          python3 /tmp/scripts/fix_empty_submodule_kconfig.py "$KERNEL_DIR" || true
+          for d in drivers/staging/kernelsu drivers/kernelsu; do
+            if [ -d "$KERNEL_DIR/$d" ] && [ -z "$(ls -A "$KERNEL_DIR/$d" 2>/dev/null)" ]; then
+              rmdir "$KERNEL_DIR/$d" 2>/dev/null || true
+            fi
+          done
+
+      - name: Enable swap
+        run: |
+          sudo swapoff -a 2>/dev/null || true
+          sudo rm -f /mnt/swapfile
+          if sudo fallocate -l 12G /mnt/swapfile; then
+            sudo chmod 600 /mnt/swapfile
+            sudo mkswap /mnt/swapfile
+            sudo swapon /mnt/swapfile || true
+          fi
+          free -h
+
+      - name: Build kernel
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          export ARCH=arm64 SUBARCH=arm64
+          export PATH="$CLANG_DIR/bin:$PATH"
+          export KBUILD_BUILD_USER KBUILD_BUILD_HOST
+
+          MK=(O=out ARCH=arm64
+              CC="ccache clang"
+              CLANG_TRIPLE=aarch64-linux-gnu-
+              CROSS_COMPILE=aarch64-linux-gnu-
+              CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+              LD=ld.lld AR=llvm-ar NM=llvm-nm
+              OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+              LLVM_IAS=1)
+
+          rm -rf out && mkdir -p out
+
+          # yaml fix
+          if grep -q 'HOSTLDLIBS_dtc' scripts/dtc/Makefile 2>/dev/null \
+             && ! grep -q 'HOSTLOADLIBES_dtc' scripts/dtc/Makefile; then
+            echo 'HOSTLOADLIBES_dtc := $(HOSTLDLIBS_dtc)' >> scripts/dtc/Makefile
+          fi
+
+          # BPF patches (critical for boot)
+          python3 /tmp/scripts/backport_bpf_map_types.py || true
+          python3 /tmp/scripts/backport_bpf_attr.py || true
+
+          # Kernel config
+          make "${MK[@]}" raphael_defconfig
+
+          # Merge docker config + CI fragment
+          cat > /tmp/ci.fragment <<'FRAG'
+          CONFIG_LOCALVERSION="-HyperPower-LXC"
+          CONFIG_IKCONFIG=y
+          CONFIG_IKCONFIG_PROC=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
+          CONFIG_LITTLE_CPU_MASK=15
+          CONFIG_BIG_CPU_MASK=112
+          CONFIG_PRIME_CPU_MASK=128
+          CONFIG_PSTORE=y
+          CONFIG_PSTORE_CONSOLE=y
+          CONFIG_PSTORE_PMSG=y
+          CONFIG_PSTORE_RAM=y
+          FRAG
+          sed -i 's/^          //' /tmp/ci.fragment
+
+          ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out out/.config \
+            /tmp/docker.config /tmp/ci.fragment
+          sed -i -E '/^CONFIG_[A-Z0-9_]+=""$/d' out/.config
+          make "${MK[@]}" olddefconfig
+
+          # Build
+          make -j"$(nproc)" "${MK[@]}" Image.gz-dtb
+          ls -lh out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+          rm -rf ak3/.git
+          cp /tmp/anykernel.sh ak3/anykernel.sh
+          cp kernel/out/arch/arm64/boot/Image.gz-dtb ak3/Image.gz-dtb
+          NAME="raphael-xiziphus-test-$(date +%Y%m%d).zip"
+          ( cd ak3 && zip -r9 "../$NAME" . -x '.git*' 'README.md' >/dev/null )
+          echo "ZIP_NAME=$NAME" >> "$GITHUB_ENV"
+          ls -lh "$NAME"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: raphael-xiziphus-test
+          path: ${{ env.ZIP_NAME }}

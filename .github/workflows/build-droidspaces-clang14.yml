@@ -369,7 +369,7 @@ jobs:
 
         git clone -b raphael-split_dtb https://github.com/Helium-Studio/AnyKernel3
 
-        cp android-kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
+        cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
 
         echo "NOT copying dtb - split_boot keeps ROM's original dtb"
 

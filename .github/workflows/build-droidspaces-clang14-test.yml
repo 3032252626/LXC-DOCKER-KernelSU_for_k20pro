@@ -328,7 +328,7 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        echo "SKIP: source fixes (pure kernel test)"
+        curl -sL "https://raw.githubusercontent.com/ravindu644/Android-Kernel-Tutorials/main/patches/023.undefined_reference_to_%60yaml_emitter_initialize%27.patch" -o /tmp/yaml.patch && patch -p1 < /tmp/yaml.patch
 
         
 

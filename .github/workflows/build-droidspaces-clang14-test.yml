@@ -1,4 +1,4 @@
-name: TEST - Droidspaces clang22 NO-KSU
+name: TEST - Pure stock clang22
 
 on:
 
@@ -274,10 +274,7 @@ jobs:
     - name: 配置KernelSU kprobe（方案1）
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "CONFIG_MODULES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "SKIP: KSU kprobe config (pure kernel test)"
         if [ "${{ env.ENABLE_PATH_UMOUNT }}" = "true" ] && ! grep -q 'int path_umount' fs/namespace.c; then
           cd $GITHUB_WORKSPACE/kernel_workspace
           cat >> android-kernel/fs/namespace.c << 'PATHUMOUNTEOF'
@@ -328,13 +325,7 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
-
-        sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
-
-        sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c
-
-        sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c
+        echo "SKIP: source fixes (pure kernel test)"
 
         
 
@@ -393,6 +384,6 @@ jobs:
 
       with:
 
-        name: raphael_Zundamon-test-noksu
+        name: raphael_Zundamon-test-pure
 
         path: kernel_workspace/AnyKernel3/*

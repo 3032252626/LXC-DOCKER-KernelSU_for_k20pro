@@ -387,6 +387,6 @@ jobs:
 
       with:
 
-        name: raphael_Zundamon-test-nofix
+        name: raphael_Zundamon-test-dtconly
 
         path: kernel_workspace/AnyKernel3/*

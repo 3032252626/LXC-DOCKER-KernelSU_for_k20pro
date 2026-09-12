@@ -1,4 +1,4 @@
-name: TEST - Droidspaces clang14 [Author AK3 split_dtb]
+name: TEST - Droidspaces clang22 r596125 [match stock]
 
 on:
 
@@ -68,9 +68,12 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace
 
-        mkdir clang-aosp
+        mkdir -p clang-aosp/clang-r596125
 
-        git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp
+        wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r596125.tar.gz
+        tar -xzf clang-r596125.tar.gz -C clang-aosp/clang-r596125 --strip-components=1
+        rm -f clang-r596125.tar.gz
+        clang-aosp/clang-r596125/bin/clang --version
 
     
 
@@ -341,7 +344,7 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r596125/bin:$PATH
 
         export KBUILD_BUILD_HOST=17
 
@@ -390,6 +393,6 @@ jobs:
 
       with:
 
-        name: raphael_Zundamon-test-split_dtb
+        name: raphael_Zundamon-test-clang22
 
         path: kernel_workspace/AnyKernel3/*

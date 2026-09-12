@@ -328,7 +328,7 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        python3 -c "import re; p='scripts/dtc/Makefile'; s=open(p).read(); s=re.sub(r'ifeq.*?\\nHOST_EXTRACFLAGS \\+= -DNO_YAML\\n.*?endif\\n', 'HOST_EXTRACFLAGS += -DNO_YAML\\n', s, flags=re.S); open(p,'w').write(s)" && grep -n "yaml\\|NO_YAML\\|yamltree" scripts/dtc/Makefile
+        sed -i "/yamltree/d" scripts/dtc/Makefile && sed -i "/HOSTLDLIBS_dtc/d" scripts/dtc/Makefile && rm -f scripts/dtc/yamltree.c && echo "HOST_EXTRACFLAGS += -DNO_YAML" >> scripts/dtc/Makefile && cat scripts/dtc/Makefile | grep -i yaml
 
         
 

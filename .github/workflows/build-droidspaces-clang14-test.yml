@@ -1,4 +1,4 @@
-name: TEST - Pure stock clang22
+name: TEST - No sed fixes clang22
 
 on:
 
@@ -274,7 +274,10 @@ jobs:
     - name: 配置KernelSU kprobe（方案1）
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "SKIP: KSU kprobe config (pure kernel test)"
+        echo "CONFIG_MODULES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         if [ "${{ env.ENABLE_PATH_UMOUNT }}" = "true" ] && ! grep -q 'int path_umount' fs/namespace.c; then
           cd $GITHUB_WORKSPACE/kernel_workspace
           cat >> android-kernel/fs/namespace.c << 'PATHUMOUNTEOF'
@@ -384,6 +387,6 @@ jobs:
 
       with:
 
-        name: raphael_Zundamon-test-pure
+        name: raphael_Zundamon-test-nofix
 
         path: kernel_workspace/AnyKernel3/*

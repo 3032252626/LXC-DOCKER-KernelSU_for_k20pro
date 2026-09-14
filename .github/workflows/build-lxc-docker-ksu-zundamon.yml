@@ -50,7 +50,7 @@ jobs:
       - name: Clone kernel source (oss-base)
         run: |
           git clone --depth=1 -b oss-base \
-            https://github.com/3032252626/kernel_xiaomi_raphael.git kernel
+            https://github.com/HeliumStudio-Dev/kernel_xiaomi_raphael.git kernel
           cd kernel
           echo "--- kernel version ---"
           grep -E "^(VERSION|PATCHLEVEL|SUBLEVEL)" Makefile

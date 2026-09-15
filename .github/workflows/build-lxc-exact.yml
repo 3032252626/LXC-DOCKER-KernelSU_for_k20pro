@@ -53,6 +53,9 @@ jobs:
             sed -i "/^${key}=/d" arch/arm64/configs/raphael_defconfig
             echo "${key}=${val}" >> arch/arm64/configs/raphael_defconfig
           }
+          # Disable BTRFS (causes clang22 timespec error, not needed for Docker)
+          sed -i '/^CONFIG_BTRFS_FS=/d' arch/arm64/configs/raphael_defconfig
+          echo "# CONFIG_BTRFS_FS is not set" >> arch/arm64/configs/raphael_defconfig
           check_add CONFIG_NAMESPACES y
           check_add CONFIG_PID_NS y
           check_add CONFIG_UTS_NS y

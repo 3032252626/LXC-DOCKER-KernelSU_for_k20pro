@@ -108,7 +108,6 @@ jobs:
 
       - name: Pack AnyKernel3
         run: |
-          sudo apt-get install -y -qq zip || true
           cd kernel
           git clone --depth 1 https://github.com/osm0sis/AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
@@ -116,13 +115,9 @@ jobs:
           sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
           cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
           rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
-          cd AnyKernel3
-          zip -r9 ../../raphael-LXC-Docker-$(date +%Y%m%d).zip . -x '.*'
-          cd ../..
-          ls -lh raphael-LXC-Docker-*.zip
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: raphael-LXC-Docker
-          path: raphael-LXC-Docker-*.zip
+          path: kernel/AnyKernel3/*

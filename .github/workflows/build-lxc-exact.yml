@@ -10,7 +10,7 @@ jobs:
       - name: Checkout kernel source (oss-base)
         uses: actions/checkout@v4
         with:
-          repository: 3032252626/kernel_xiaomi_raphael
+          repository: HeliumStudio-Dev/kernel_xiaomi_raphael
           ref: oss-base
           path: kernel
 

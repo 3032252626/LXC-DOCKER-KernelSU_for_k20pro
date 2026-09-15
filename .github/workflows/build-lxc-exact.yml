@@ -10,7 +10,7 @@ jobs:
       - name: Checkout kernel source (oss-base)
         uses: actions/checkout@v4
         with:
-          repository: HeliumStudio-Dev/kernel_xiaomi_raphael
+          repository: 3032252626/kernel_xiaomi_raphael
           ref: oss-base
           path: kernel
 
@@ -53,9 +53,11 @@ jobs:
             sed -i "/^${key}=/d" arch/arm64/configs/raphael_defconfig
             echo "${key}=${val}" >> arch/arm64/configs/raphael_defconfig
           }
-          # Disable BTRFS (causes clang22 timespec error, not needed for Docker)
+          # Disable BTRFS and HUGETLB (cause clang22 compile errors, not needed)
           sed -i '/^CONFIG_BTRFS_FS=/d' arch/arm64/configs/raphael_defconfig
           echo "# CONFIG_BTRFS_FS is not set" >> arch/arm64/configs/raphael_defconfig
+          sed -i '/^CONFIG_HUGETLB_PAGE=/d' arch/arm64/configs/raphael_defconfig
+          echo "# CONFIG_HUGETLB_PAGE is not set" >> arch/arm64/configs/raphael_defconfig
           check_add CONFIG_NAMESPACES y
           check_add CONFIG_PID_NS y
           check_add CONFIG_UTS_NS y

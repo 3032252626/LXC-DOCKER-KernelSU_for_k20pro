@@ -335,38 +335,21 @@ jobs:
 
         
 
-    - name: 开始编译内核
-
     - name: 注入 CONFIG_MODVERSIONS + CONFIG_MODULE_UNLOAD (vendor 模块加载必需)
       run: |
-        cd $GITHUB_WORKSPACE/android-kernel
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         CONFIG_FILE=arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        # 三层防御：defconfig → out/.config → 编译后校验
-        # 层1: defconfig 层（编译前）
+        # 层1: defconfig 层强制开启（后续 make defconfig 会一并带入 out/.config）
         for VAR in CONFIG_MODULES CONFIG_MODVERSIONS CONFIG_MODULE_UNLOAD; do
           sed -i "/^${VAR}=/d" $CONFIG_FILE
+          sed -i "/^# ${VAR} is not set/d" $CONFIG_FILE
           sed -i "/^#${VAR} is not set/d" $CONFIG_FILE
           echo "${VAR}=y" >> $CONFIG_FILE
         done
-        echo "[layer1] 已强制写入 modversions + mod_unload 到 defconfig"
-        # 编译生成 out/.config
-        make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-        # 层2: out/.config 层（编译后但打包前）
-        for VAR in CONFIG_MODULES CONFIG_MODVERSIONS CONFIG_MODULE_UNLOAD; do
-          sed -i "/^${VAR}=/d" out/.config
-          sed -i "/^#${VAR} is not set/d" out/.config
-          echo "${VAR}=y" >> out/.config
-        done
-        make -s O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }} olddefconfig
-        echo "[layer2] 已强制写入 modversions + mod_unload 到 out/.config"
-        # 层3: 编译后 vermagic 自校验
-        if strings out/vmlinux | grep -q "mod_unload modversions"; then
-          echo "[layer3] OK - vermagic 已含 mod_unload modversions"
-        else
-          echo "[layer3] FAIL - vermagic 缺少 modversions/mod_unload，终止打包"
-          exit 1
-        fi
-        echo "[layer3] vermagic 校验通过，可以继续打包"
+        echo "[layer1] defconfig 已强制写入 MODULES/MODVERSIONS/MODULE_UNLOAD=y"
+        grep -E "^CONFIG_(MODULES|MODVERSIONS|MODULE_UNLOAD)=" $CONFIG_FILE
+
+    - name: 开始编译内核
 
       run: |
 
@@ -391,6 +374,24 @@ jobs:
         fi
 
                 
+
+    - name: 校验 MODVERSIONS (编译后 vermagic 自校验)
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        # 层2: out/.config 断言（由 defconfig 带入，若缺失说明注入被覆盖）
+        for VAR in CONFIG_MODULES CONFIG_MODVERSIONS CONFIG_MODULE_UNLOAD; do
+          if grep -q "^${VAR}=y" out/.config; then
+            echo "[layer2] out/.config 含 ${VAR}=y"
+          else
+            echo "[layer2] FAIL - out/.config 缺少 ${VAR}=y"; exit 1
+          fi
+        done
+        # 层3: 编译产物 vermagic 自校验，缺项则禁止打包，避免刷入后卡 MI logo
+        if strings out/vmlinux | grep -q "modversions" && strings out/vmlinux | grep -q "mod_unload"; then
+          echo "[layer3] OK - vermagic 已含 mod_unload modversions"
+        else
+          echo "[layer3] FAIL - vermagic 缺少 modversions/mod_unload，禁止打包出口"; exit 1
+        fi
 
     - name: 准备打包内核
 

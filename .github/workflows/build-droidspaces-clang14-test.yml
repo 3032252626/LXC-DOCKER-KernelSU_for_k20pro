@@ -335,6 +335,22 @@ jobs:
 
         
 
+    - name: 内核模块版本标记 MODVERSIONS / MODULE_UNLOAD
+
+      run: |
+
+        CFG=$GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
+        echo "=== 修复 vendor 模块版本标记（MODVERSIONS / MODULE_UNLOAD）==="
+
+        sed -i '/^CONFIG_MODULES=/d;/^# CONFIG_MODULES is not set/d;/^CONFIG_MODVERSIONS=/d;/^# CONFIG_MODVERSIONS is not set/d;/^CONFIG_MODULE_UNLOAD=/d;/^# CONFIG_MODULE_UNLOAD is not set/d' "$CFG"
+
+        printf 'CONFIG_MODULES=y\nCONFIG_MODVERSIONS=y\nCONFIG_MODULE_UNLOAD=y\n' >> "$CFG"
+
+        echo "=== defconfig 模块开关 ==="
+
+        grep -E '^CONFIG_(MODULES|MODVERSIONS|MODULE_UNLOAD)=' "$CFG" || true
+
     - name: 开始编译内核
 
       run: |
@@ -348,6 +364,18 @@ jobs:
         export KBUILD_BUILD_USER=HyperPower
 
         make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        echo "=== 强制在 .config 中开启 MODULES / MODVERSIONS / MODULE_UNLOAD ==="
+
+        sed -i '/^CONFIG_MODULES=/d;/^# CONFIG_MODULES is not set/d;/^CONFIG_MODVERSIONS=/d;/^# CONFIG_MODVERSIONS is not set/d;/^CONFIG_MODULE_UNLOAD=/d;/^# CONFIG_MODULE_UNLOAD is not set/d' out/.config
+
+        printf 'CONFIG_MODULES=y\nCONFIG_MODVERSIONS=y\nCONFIG_MODULE_UNLOAD=y\n' >> out/.config
+
+        make -s O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }} olddefconfig
+
+        grep -E '^CONFIG_(MODULES|MODVERSIONS|MODULE_UNLOAD)= y?' out/.config || true
+
+        grep -E '^CONFIG_(MODULES|MODVERSIONS|MODULE_UNLOAD)=' out/.config
+
 
         if [ ${{env.LLVM_CONFIG}}=y ]; then
 
@@ -358,6 +386,22 @@ jobs:
         make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
 
         fi
+        echo "=== 校验内核 vermagic 是否含 mod_unload modversions ==="
+
+        if strings out/vmlinux | grep -q "mod_unload modversions"; then
+
+          echo "[OK] vermagic 已含 mod_unload modversions，vendor 模块可正常加载"
+
+        else
+
+          echo "[FAIL] vermagic 缺失 mod_unload modversions，vendor 模块将无法加载（会卡开机）"
+
+          strings out/vmlinux | grep -m5 "SMP preempt" || true
+
+          exit 1
+
+        fi
+
 
                 
 

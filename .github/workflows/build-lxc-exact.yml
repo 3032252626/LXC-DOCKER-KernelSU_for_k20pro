@@ -36,6 +36,10 @@ jobs:
           echo "=== yaml fix ==="
           sed -i -e 's/^ifeq (.*yaml-0.1.*$/ifeq (1,1)/' scripts/dtc/Makefile
 
+          echo "=== fix hugetlbpage.c ptep undeclared ==="
+          sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
+          grep -n "huge_pmd_share" arch/arm64/mm/hugetlbpage.c
+
           echo "=== LXC/Docker config ==="
           wget -q https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/LXC-DOCKER-OPEN-CONFIG.sh -O /tmp/lxc-config.sh
           chmod 755 /tmp/lxc-config.sh

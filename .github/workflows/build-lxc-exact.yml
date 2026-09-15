@@ -102,6 +102,13 @@ jobs:
 
           echo "=== defconfig ==="
           make O=out ARCH=arm64 $MAKEVARS raphael_defconfig 2>&1 | tail -5
+          # Force module options in .config (defconfig may disable them)
+          sed -i '/^# CONFIG_MODULES is not set/d' out/.config
+          echo "CONFIG_MODULES=y" >> out/.config
+          echo "CONFIG_MODVERSIONS=y" >> out/.config
+          echo "CONFIG_MODULE_UNLOAD=y" >> out/.config
+          make O=out ARCH=arm64 $MAKEVARS olddefconfig 2>&1 | tail -5
+          grep -E "CONFIG_MODULES|CONFIG_MODVERSIONS|CONFIG_MODULE_UNLOAD" out/.config
 
           echo "=== build ==="
           if ! make O=out ARCH=arm64 $MAKEVARS -j$(nproc) Image.gz-dtb KCFLAGS="-Wno-error" > build.log 2>&1; then

@@ -1,4 +1,4 @@
-name: LXC-Docker + DroidSpaces (author config base)
+name: LXC-Docker + DroidSpaces (clean raphael_defconfig)
 
 on:
   workflow_dispatch:
@@ -14,10 +14,10 @@ jobs:
           ref: oss-base
           path: kernel
 
-      - name: Install build deps + p7zip
+      - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y -o Acquire::Retries=3 bc flex bison libssl-dev libelf-dev libyaml-dev pkg-config p7zip-full
+          sudo apt-get install -y -o Acquire::Retries=3 bc flex bison libssl-dev libelf-dev libyaml-dev pkg-config p7zip-full zip
           echo "deps ok"
 
       - name: Download Mandi-Sa clang 22
@@ -29,10 +29,14 @@ jobs:
           rm -f /tmp/tc/bin/ld /tmp/tc/bin/ld.bfd /tmp/tc/bin/ld.lld /tmp/tc/bin/ld64.lld
           /tmp/tc/bin/clang --version | head -1
 
-      - name: Apply patches
+      - name: Apply patches + fix Makefile
         working-directory: kernel
         run: |
           set -e
+          echo "=== fix config_data.gz override ==="
+          sed -i 's|$(obj)/config_data.gz: arch/arm64/configs/raphael-vts_defconfig FORCE|$(obj)/config_data.gz: $(KCONFIG_CONFIG) FORCE|' kernel/Makefile
+          grep -n "config_data.gz" kernel/Makefile
+
           echo "=== yaml fix ==="
           sed -i -e 's/^ifeq (.*yaml-0.1.*$/ifeq (1,1)/' scripts/dtc/Makefile
 
@@ -56,20 +60,21 @@ jobs:
           echo "=== version check ==="
           grep -E "^(VERSION|PATCHLEVEL|SUBLEVEL)" Makefile
 
-          echo "=== download author .config ==="
-          mkdir -p out
-          curl -sL "https://raw.githubusercontent.com/3032252626/LXC-DOCKER-KernelSU_for_k20pro/main/author_defconfig" -o out/.config
+          echo "=== clean build ==="
+          make O=out ARCH=arm64 $MAKEVARS mrproper
+          make O=out ARCH=arm64 $MAKEVARS raphael_defconfig
 
-          echo "=== add LXC/Docker options ==="
+          echo "=== enable MODULES + LXC/Docker ==="
           ./scripts/config --file out/.config \
-            -e NAMESPACES -e PID_NS -e UTS_NS -e IPC_NS -e USER_NS \
+            -e MODULES -e MODVERSIONS -e MODULE_UNLOAD \
+            -e NAMESPACES -e PID_NS -e UTS_NS -e IPC_NS -e USER_NS -e NET_NS \
             -e CGROUPS -e CGROUP_DEVICE -e CGROUP_PIDS -e CGROUP_FREEZER \
             -e CGROUP_NET_PRIO -e OVERLAY_FS -e VETH -e BRIDGE \
             -e NETFILTER -e NETFILTER_XT_MATCH_CGROUP -e IP_NF_TARGET_MASQUERADE \
-            -e POSIX_MQUEUE
+            -e POSIX_MQUEUE -e TUN -e DEVPTS_MULTIPLE_INSTANCES
 
           make O=out ARCH=arm64 $MAKEVARS olddefconfig 2>&1 | tail -5
-          grep -E "CONFIG_MODULES=|CONFIG_MODVERSIONS=|CONFIG_PID_NS=|CONFIG_OVERLAY_FS=" out/.config
+          grep -E "CONFIG_MODULES=|CONFIG_MODVERSIONS=|CONFIG_MODULE_UNLOAD=|CONFIG_PID_NS=|CONFIG_OVERLAY_FS=|CONFIG_DEVPTS_MULTIPLE" out/.config
 
           echo "=== build ==="
           if ! make O=out ARCH=arm64 $MAKEVARS -j$(nproc) Image.gz-dtb KCFLAGS="-Wno-error" > build.log 2>&1; then
@@ -82,7 +87,6 @@ jobs:
 
       - name: Pack AnyKernel3
         run: |
-          sudo apt-get install -y -qq zip || true
           cd kernel
           git clone --depth 1 https://github.com/osm0sis/AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh

@@ -1,4 +1,4 @@
-name: LXC-Docker + DroidSpaces (Zundamon exact recipe + clang22)
+name: LXC-Docker + DroidSpaces (author config base)
 
 on:
   workflow_dispatch:
@@ -29,56 +29,12 @@ jobs:
           rm -f /tmp/tc/bin/ld /tmp/tc/bin/ld.bfd /tmp/tc/bin/ld.lld /tmp/tc/bin/ld64.lld
           /tmp/tc/bin/clang --version | head -1
 
-      - name: Apply LXC/Docker + DroidSpaces patches
+      - name: Apply patches
         working-directory: kernel
         run: |
           set -e
           echo "=== yaml fix ==="
           sed -i -e 's/^ifeq (.*yaml-0.1.*$/ifeq (1,1)/' scripts/dtc/Makefile
-
-          echo "=== fix hugetlbpage.c ptep undeclared ==="
-          sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
-          grep -n "huge_pmd_share" arch/arm64/mm/hugetlbpage.c
-
-          echo "=== LXC/Docker config ==="
-          wget -q https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/LXC-DOCKER-OPEN-CONFIG.sh -O /tmp/lxc-config.sh
-          chmod 755 /tmp/lxc-config.sh
-          sed -i '/^CONFIG_PID_NS=/d' arch/arm64/configs/raphael_defconfig
-          echo "CONFIG_PID_NS=y" >> arch/arm64/configs/raphael_defconfig
-          /tmp/lxc-config.sh arch/arm64/configs/raphael_defconfig -w
-
-          echo "=== DroidSpaces config ==="
-          check_add() {
-            local key="$1" val="$2"
-            sed -i "/^${key}=/d" arch/arm64/configs/raphael_defconfig
-            echo "${key}=${val}" >> arch/arm64/configs/raphael_defconfig
-          }
-          # Disable BTRFS and HUGETLB (cause clang22 compile errors, not needed)
-          sed -i '/^CONFIG_BTRFS_FS=/d' arch/arm64/configs/raphael_defconfig
-          echo "# CONFIG_BTRFS_FS is not set" >> arch/arm64/configs/raphael_defconfig
-          sed -i '/^CONFIG_HUGETLB_PAGE=/d' arch/arm64/configs/raphael_defconfig
-          echo "# CONFIG_HUGETLB_PAGE is not set" >> arch/arm64/configs/raphael_defconfig
-          # Enable module support (required for vendor modules)
-          check_add CONFIG_MODULES y
-          check_add CONFIG_MODVERSIONS y
-          check_add CONFIG_MODULE_UNLOAD y
-          check_add CONFIG_NAMESPACES y
-          check_add CONFIG_PID_NS y
-          check_add CONFIG_UTS_NS y
-          check_add CONFIG_IPC_NS y
-          check_add CONFIG_USER_NS y
-          check_add CONFIG_CGROUPS y
-          check_add CONFIG_CGROUP_DEVICE y
-          check_add CONFIG_CGROUP_PIDS y
-          check_add CONFIG_CGROUP_FREEZER y
-          check_add CONFIG_CGROUP_NET_PRIO y
-          check_add CONFIG_OVERLAY_FS y
-          check_add CONFIG_VETH y
-          check_add CONFIG_BRIDGE y
-          check_add CONFIG_NETFILTER y
-          check_add CONFIG_NETFILTER_XT_MATCH_CGROUP y
-          check_add CONFIG_IP_NF_TARGET_MASQUERADE y
-          check_add CONFIG_POSIX_MQUEUE y
 
           echo "=== DroidSpaces patches ==="
           if [ -f net/netfilter/xt_qtaguid.c ]; then
@@ -100,15 +56,20 @@ jobs:
           echo "=== version check ==="
           grep -E "^(VERSION|PATCHLEVEL|SUBLEVEL)" Makefile
 
-          echo "=== defconfig ==="
-          make O=out ARCH=arm64 $MAKEVARS raphael_defconfig 2>&1 | tail -5
-          # Force module options in .config (defconfig may disable them)
-          sed -i '/^# CONFIG_MODULES is not set/d' out/.config
-          echo "CONFIG_MODULES=y" >> out/.config
-          echo "CONFIG_MODVERSIONS=y" >> out/.config
-          echo "CONFIG_MODULE_UNLOAD=y" >> out/.config
+          echo "=== download author .config ==="
+          mkdir -p out
+          curl -sL "https://raw.githubusercontent.com/3032252626/LXC-DOCKER-KernelSU_for_k20pro/main/author_defconfig" -o out/.config
+
+          echo "=== add LXC/Docker options ==="
+          ./scripts/config --file out/.config \
+            -e NAMESPACES -e PID_NS -e UTS_NS -e IPC_NS -e USER_NS \
+            -e CGROUPS -e CGROUP_DEVICE -e CGROUP_PIDS -e CGROUP_FREEZER \
+            -e CGROUP_NET_PRIO -e OVERLAY_FS -e VETH -e BRIDGE \
+            -e NETFILTER -e NETFILTER_XT_MATCH_CGROUP -e IP_NF_TARGET_MASQUERADE \
+            -e POSIX_MQUEUE
+
           make O=out ARCH=arm64 $MAKEVARS olddefconfig 2>&1 | tail -5
-          grep -E "CONFIG_MODULES|CONFIG_MODVERSIONS|CONFIG_MODULE_UNLOAD" out/.config
+          grep -E "CONFIG_MODULES=|CONFIG_MODVERSIONS=|CONFIG_PID_NS=|CONFIG_OVERLAY_FS=" out/.config
 
           echo "=== build ==="
           if ! make O=out ARCH=arm64 $MAKEVARS -j$(nproc) Image.gz-dtb KCFLAGS="-Wno-error" > build.log 2>&1; then

@@ -375,7 +375,7 @@ jobs:
 
         sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
 
-        cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        cp android-kernel/out/arch/arm64/boot/Image-dtb AnyKernel3/
 
         echo "NOT copying dtb - split_boot keeps ROM's original dtb"
 

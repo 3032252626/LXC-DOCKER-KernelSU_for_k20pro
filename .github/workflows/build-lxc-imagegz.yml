@@ -1,0 +1,112 @@
+name: LXC-Docker (Image.gz, keep stock dtb)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout kernel source (oss-base)
+        uses: actions/checkout@v4
+        with:
+          repository: 3032252626/kernel_xiaomi_raphael
+          ref: oss-base
+          path: kernel
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 bc flex bison libssl-dev libelf-dev libyaml-dev pkg-config p7zip-full zip
+          echo "deps ok"
+
+      - name: Download Mandi-Sa clang 22
+        timeout-minutes: 10
+        run: |
+          cd /tmp
+          curl -sSL --retry 3 -o tc.7z "https://github.com/Mandi-Sa/clang/releases/download/amd64-kernel-arm_static-22/llvm22.0.0-binutils2.45.1_amd64-kernel-arm_static-20260111.7z"
+          7z x -y tc.7z -o/tmp/tc >/dev/null
+          # only remove bare host ld, keep ld.lld
+          rm -f /tmp/tc/bin/ld /tmp/tc/bin/ld.bfd /tmp/tc/bin/ld64.lld
+          /tmp/tc/bin/clang --version | head -1
+          /tmp/tc/bin/ld.lld --version | head -1
+
+      - name: Apply patches + fix Makefile
+        working-directory: kernel
+        run: |
+          set -e
+          echo "=== fix config_data.gz override ==="
+          sed -i 's|$(obj)/config_data.gz: arch/arm64/configs/raphael-vts_defconfig FORCE|$(obj)/config_data.gz: $(KCONFIG_CONFIG) FORCE|' kernel/Makefile
+          grep -n "config_data.gz" kernel/Makefile
+
+          echo "=== yaml fix ==="
+          sed -i -e 's/^ifeq (.*yaml-0.1.*$/ifeq (1,1)/' scripts/dtc/Makefile
+
+          echo "=== DroidSpaces patches ==="
+          if [ -f net/netfilter/xt_qtaguid.c ]; then
+            curl -sL "https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch" | patch -p1 || echo "[WARN] patch 01 failed"
+          fi
+          if ! grep -q "kernfs_create_link(cgrp->kn, name, kn)" kernel/cgroup/cgroup.c; then
+            curl -sL "https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch" | patch -p1 || echo "[WARN] patch 02 failed"
+          fi
+          echo "=== patches done ==="
+
+      - name: Build Image.gz (no dtb)
+        run: |
+          cd kernel
+          export PATH=/tmp/tc/bin:$PATH
+          export ARCH=arm64
+
+          echo "=== clean build ==="
+          make O=out ARCH=arm64 mrproper
+          make O=out ARCH=arm64 raphael_defconfig
+
+          echo "=== disable MODULES + LXC/Docker ==="
+          ./scripts/config --file out/.config \
+            -d MODULES -d MODVERSIONS -d MODULE_UNLOAD \
+            -e NAMESPACES -e PID_NS -e UTS_NS -e IPC_NS -e USER_NS -e NET_NS \
+            -e CGROUPS -e CGROUP_DEVICE -e CGROUP_PIDS -e CGROUP_FREEZER \
+            -e CGROUP_NET_PRIO -e OVERLAY_FS -e VETH -e BRIDGE \
+            -e NETFILTER -e NETFILTER_XT_MATCH_CGROUP -e IP_NF_TARGET_MASQUERADE \
+            -e POSIX_MQUEUE -e TUN -e DEVPTS_MULTIPLE_INSTANCES
+
+          make O=out ARCH=arm64 olddefconfig 2>&1 | tail -5
+          grep -E "CONFIG_MODULES=|CONFIG_PID_NS=|CONFIG_OVERLAY_FS=" out/.config
+
+          echo "=== build Image.gz (LLVM toolchain) ==="
+          if ! make O=out ARCH=arm64 \
+              CC=/tmp/tc/bin/clang HOSTCC=gcc \
+              LD=/tmp/tc/bin/ld.lld AR=/tmp/tc/bin/llvm-ar NM=/tmp/tc/bin/llvm-nm \
+              OBJCOPY=/tmp/tc/bin/llvm-objcopy OBJDUMP=/tmp/tc/bin/llvm-objdump STRIP=/tmp/tc/bin/llvm-strip \
+              CLANG_TRIPLE=aarch64-linux-gnu- \
+              CROSS_COMPILE=aarch64-linux-gnu- \
+              CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+              -j$(nproc) Image.gz \
+              KCFLAGS="-Wno-error" > build.log 2>&1; then
+            grep -n -E "error:|Error [0-9]+|undefined reference|fatal error|No such file" build.log | tail -40 || true
+            tail -40 build.log
+            exit 1
+          fi
+          tail -10 build.log
+          ls -lh out/arch/arm64/boot/Image.gz
+          strings out/arch/arm64/boot/Image | grep -m1 "Linux version"
+
+      - name: Pack AnyKernel3
+        run: |
+          cd kernel
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+          sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+          sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+          cp out/arch/arm64/boot/Image.gz AnyKernel3/
+          rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+          cd AnyKernel3
+          zip -r9 ../../raphael-LXC-Docker.zip . -x '.*'
+          cd ../..
+          ls -lh raphael-LXC-Docker.zip
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: raphael-LXC-Docker
+          path: raphael-LXC-Docker.zip

@@ -411,17 +411,69 @@ jobs:
 
         echo "=== kernel artifacts ==="; ls -lh $KB/Image* 2>/dev/null || true
 
-        if [ -f $KB/Image-dtb ]; then cp $KB/Image-dtb AnyKernel3/; echo "picked Image-dtb (uncompressed + appended dtb, stock form)"
+        # raphael(msm8150) ABL 只接受 gzip 压缩内核；未压缩 Image-dtb 会导致刷入后直接进 fastboot
 
-        elif [ -f $KB/Image.gz-dtb ]; then cp $KB/Image.gz-dtb AnyKernel3/; echo "picked Image.gz-dtb"
+        # 统一产出标准 Image.gz-dtb = gzip(Image) + 未压缩 dtb
+
+        python3 - "$KB" << 'PYEOF'
+        import sys, os, gzip, zlib, struct
+        kb = sys.argv[1]
+        def gz_used(data):
+            try:
+                d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                d.decompress(data)
+                return len(data) - len(d.unused_data)
+            except Exception:
+                return -1
+        def appended_dtb(data):
+            magic = bytes.fromhex("d00dfeed")
+            best = -1
+            i = data.find(magic)
+            while i >= 0:
+                if i + 8 <= len(data):
+                    tot = struct.unpack(">I", data[i+4:i+8])[0]
+                    if tot == len(data) - i:
+                        best = i
+                i = data.find(magic, i + 4)
+            return best
+        src = None
+        for c in ("Image-dtb", "Image"):
+            p = os.path.join(kb, c)
+            if os.path.exists(p):
+                src = p
+                break
+        if src is None:
+            print("[repack] no uncompressed Image/Image-dtb, keep as-is")
+            sys.exit(0)
+        data = open(src, "rb").read()
+        gl = gz_used(data)
+        if gl > 0:
+            img = zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(data)
+            dtb = data[gl:]
+            print("[repack] %s already gzipped image=%d dtb=%d" % (os.path.basename(src), len(img), len(dtb)))
+        else:
+            off = appended_dtb(data)
+            if off > 0:
+                img, dtb = data[:off], data[off:]
+            else:
+                img, dtb = data, b""
+            print("[repack] %s uncompressed image=%d dtb=%d" % (os.path.basename(src), len(img), len(dtb)))
+        ngz = gzip.compress(img, 9, mtime=0)
+        open(os.path.join(kb, "Image.gz"), "wb").write(ngz)
+        out = os.path.join(kb, "Image.gz-dtb")
+        with open(out, "wb") as f:
+            f.write(ngz)
+            f.write(dtb)
+        print("[repack] wrote %s gz=%d total=%d" % (out, len(ngz), len(ngz) + len(dtb)))
+        PYEOF
+
+        if [ -f $KB/Image.gz-dtb ]; then cp $KB/Image.gz-dtb AnyKernel3/; echo "picked Image.gz-dtb (gzip image + appended dtb)"
 
         elif [ -f $KB/Image.gz ]; then cp $KB/Image.gz AnyKernel3/; echo "picked Image.gz"
 
-        elif [ -f $KB/Image ]; then cp $KB/Image AnyKernel3/; echo "picked Image"
+        else echo "FATAL: no usable kernel image built"; exit 1; fi
 
-        else echo "FATAL: no kernel image built"; exit 1; fi
-
-        echo "NOT copying dtb - split_boot keeps ROM's original dtb"
+        echo "NOT copying separate dtb - Image.gz-dtb already carries it; split_boot keeps ROM dtb as well"
 
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
 

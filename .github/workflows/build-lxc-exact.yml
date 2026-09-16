@@ -49,22 +49,20 @@ jobs:
           fi
           echo "=== patches done ==="
 
-      - name: Build Image.gz-dtb
+      - name: Build Image.gz (no dtb, keep stock dtb)
         run: |
           cd kernel
           export PATH=/tmp/tc/bin:$PATH
           export ARCH=arm64
 
-          MAKEVARS="CC=/tmp/tc/bin/clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCC=gcc"
-
           echo "=== version check ==="
           grep -E "^(VERSION|PATCHLEVEL|SUBLEVEL)" Makefile
 
           echo "=== clean build ==="
-          make O=out ARCH=arm64 $MAKEVARS mrproper
-          make O=out ARCH=arm64 $MAKEVARS raphael_defconfig
+          make O=out ARCH=arm64 mrproper
+          make O=out ARCH=arm64 raphael_defconfig
 
-          echo "=== disable MODULES (author kernel has no modules) + LXC/Docker ==="
+          echo "=== disable MODULES + enable LXC/Docker ==="
           ./scripts/config --file out/.config \
             -d MODULES -d MODVERSIONS -d MODULE_UNLOAD \
             -e NAMESPACES -e PID_NS -e UTS_NS -e IPC_NS -e USER_NS -e NET_NS \
@@ -73,19 +71,26 @@ jobs:
             -e NETFILTER -e NETFILTER_XT_MATCH_CGROUP -e IP_NF_TARGET_MASQUERADE \
             -e POSIX_MQUEUE -e TUN -e DEVPTS_MULTIPLE_INSTANCES
 
-          make O=out ARCH=arm64 $MAKEVARS olddefconfig 2>&1 | tail -5
-          echo "=== check config ==="
-          grep -E "CONFIG_MODULES=|CONFIG_MODVERSIONS=|CONFIG_PID_NS=|CONFIG_OVERLAY_FS=" out/.config
-          echo "(MODULES should be # CONFIG_MODULES is not set)"
+          make O=out ARCH=arm64 olddefconfig 2>&1 | tail -5
+          grep -E "CONFIG_MODULES=|CONFIG_PID_NS=|CONFIG_OVERLAY_FS=" out/.config
 
-          echo "=== build ==="
-          if ! make O=out ARCH=arm64 $MAKEVARS -j$(nproc) Image.gz-dtb KCFLAGS="-Wno-error" > build.log 2>&1; then
+          echo "=== build Image.gz (full LLVM toolchain, no dtb) ==="
+          if ! make O=out ARCH=arm64 \
+              CC=clang HOSTCC=clang \
+              LD=ld.lld AR=llvm-ar NM=llvm-nm \
+              OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+              CLANG_TRIPLE=aarch64-linux-gnu- \
+              CROSS_COMPILE=aarch64-linux-gnu- \
+              CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+              -j$(nproc) Image.gz \
+              KCFLAGS="-Wno-error" > build.log 2>&1; then
             grep -n -E "error:|Error [0-9]+|undefined reference|fatal error|No such file" build.log | tail -40 || true
             tail -40 build.log
             exit 1
           fi
           tail -10 build.log
-          gzip -dc out/arch/arm64/boot/Image.gz-dtb | strings | grep -m1 "Linux version"
+          ls -lh out/arch/arm64/boot/Image.gz
+          strings out/arch/arm64/boot/Image | grep -m1 "Linux version"
 
       - name: Pack AnyKernel3
         run: |
@@ -94,7 +99,7 @@ jobs:
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
           sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
           sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
-          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          cp out/arch/arm64/boot/Image.gz AnyKernel3/
           rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
           cd AnyKernel3
           zip -r9 ../../raphael-LXC-Docker.zip . -x '.*'

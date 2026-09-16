@@ -407,7 +407,19 @@ jobs:
 
         sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
 
-        cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        KB=android-kernel/out/arch/arm64/boot
+
+        echo "=== kernel artifacts ==="; ls -lh $KB/Image* 2>/dev/null || true
+
+        if [ -f $KB/Image-dtb ]; then cp $KB/Image-dtb AnyKernel3/; echo "picked Image-dtb (uncompressed + appended dtb, stock form)"
+
+        elif [ -f $KB/Image.gz-dtb ]; then cp $KB/Image.gz-dtb AnyKernel3/; echo "picked Image.gz-dtb"
+
+        elif [ -f $KB/Image.gz ]; then cp $KB/Image.gz AnyKernel3/; echo "picked Image.gz"
+
+        elif [ -f $KB/Image ]; then cp $KB/Image AnyKernel3/; echo "picked Image"
+
+        else echo "FATAL: no kernel image built"; exit 1; fi
 
         echo "NOT copying dtb - split_boot keeps ROM's original dtb"
 

@@ -64,9 +64,9 @@ jobs:
           make O=out ARCH=arm64 $MAKEVARS mrproper
           make O=out ARCH=arm64 $MAKEVARS raphael_defconfig
 
-          echo "=== enable MODULES + LXC/Docker ==="
+          echo "=== disable MODULES (author kernel has no modules) + LXC/Docker ==="
           ./scripts/config --file out/.config \
-            -e MODULES -e MODVERSIONS -e MODULE_UNLOAD \
+            -d MODULES -d MODVERSIONS -d MODULE_UNLOAD \
             -e NAMESPACES -e PID_NS -e UTS_NS -e IPC_NS -e USER_NS -e NET_NS \
             -e CGROUPS -e CGROUP_DEVICE -e CGROUP_PIDS -e CGROUP_FREEZER \
             -e CGROUP_NET_PRIO -e OVERLAY_FS -e VETH -e BRIDGE \
@@ -74,7 +74,9 @@ jobs:
             -e POSIX_MQUEUE -e TUN -e DEVPTS_MULTIPLE_INSTANCES
 
           make O=out ARCH=arm64 $MAKEVARS olddefconfig 2>&1 | tail -5
-          grep -E "CONFIG_MODULES=|CONFIG_MODVERSIONS=|CONFIG_MODULE_UNLOAD=|CONFIG_PID_NS=|CONFIG_OVERLAY_FS=|CONFIG_DEVPTS_MULTIPLE" out/.config
+          echo "=== check config ==="
+          grep -E "CONFIG_MODULES=|CONFIG_MODVERSIONS=|CONFIG_PID_NS=|CONFIG_OVERLAY_FS=" out/.config
+          echo "(MODULES should be # CONFIG_MODULES is not set)"
 
           echo "=== build ==="
           if ! make O=out ARCH=arm64 $MAKEVARS -j$(nproc) Image.gz-dtb KCFLAGS="-Wno-error" > build.log 2>&1; then

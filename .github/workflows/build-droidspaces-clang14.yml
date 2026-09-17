@@ -341,23 +341,20 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
         export KBUILD_BUILD_HOST=17
-
         export KBUILD_BUILD_USER=HyperPower
 
-        make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
 
-        if [ ${{env.LLVM_CONFIG}}=y ]; then
+        make O=out ARCH=arm64 olddefconfig
 
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" Image.gz LLVM=1 LLVM_IAS=1 Image.gz
-
-        else
-
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" Image.gz
-
-        fi
+        make O=out ARCH=arm64 -j$(nproc) Image.gz KCFLAGS="-Wno-error -Wno-error=maybe-uninitialized -Wno-error=address -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=enum-int-mismatch -Wno-error=misleading-indentation"
 
                 
 

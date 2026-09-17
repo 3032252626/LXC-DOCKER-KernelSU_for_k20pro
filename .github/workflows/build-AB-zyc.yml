@@ -94,7 +94,7 @@ jobs:
           check_add CONFIG_CGROUP_SCHED y
           check_add CONFIG_FAIR_GROUP_SCHED y
           check_add CONFIG_CGROUP_FREEZER y
-          check_add CONFIG_CGROUP_NET_PRIO y
+# skip CONFIG_CGROUP_NET_PRIO
           check_add CONFIG_DEVTMPFS y
           check_add CONFIG_OVERLAY_FS y
           check_add CONFIG_TMPFS_POSIX_ACL y

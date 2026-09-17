@@ -152,8 +152,8 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           sed -i "s/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g" arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/scripts-legacy/clangfix2.sh
-          chmod u+x clangfix3.sh
-          ./clangfix3.sh || true
+          chmod u+x clangfix2.sh
+          ./clangfix2.sh || true
 
       - name: 配置KernelSU
         if: env.ENABLE_KERNELSU == 'true'

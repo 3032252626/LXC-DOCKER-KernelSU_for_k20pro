@@ -245,6 +245,7 @@ jobs:
          echo "CONFIG_VHOST_CROSS_ENDIAN_LEGACY=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
     - name: 配置KernelSU kprobe（方案1）
+      if: env.ENABLE_KERNELSU == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         echo "CONFIG_MODULES=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}

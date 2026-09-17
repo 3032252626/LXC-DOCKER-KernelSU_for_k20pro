@@ -18,13 +18,13 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc flex bison libssl-dev libelf-dev zip
+          sudo apt-get install -y bc flex bison libssl-dev libelf-dev zip p7zip-full
 
       - name: Download clang
         run: |
           mkdir -p tc
-          wget -q https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86_clang-r450784d/archive/refs/heads/main.tar.gz -O /tmp/tc.tar.gz
-          tar xf /tmp/tc.tar.gz --strip-components=1 -C tc
+          wget -q https://github.com/Mandi-Sa/clang/releases/download/amd64-kernel-arm_static-22/llvm22.0.0-binutils2.45.1_amd64-kernel-arm_static-20260111.7z -O /tmp/tc.7z
+          7z x -y /tmp/tc.7z -otc >/dev/null
           tc/bin/clang --version | head -1
 
       - name: KernelSU
@@ -46,7 +46,7 @@ jobs:
       - name: Build
         run: |
           cd kernel
-          export PATH=$GITHUB_WORKSPACE/tc/bin:$PATH
+          export PATH=$GITHUB_WORKSPACE/tc/bin:$GITHUB_WORKSPACE/tc/aarch64-linux-gnu/bin:$GITHUB_WORKSPACE/tc/arm-linux-gnueabi/bin:$PATH
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           make O=out ARCH=arm64 raphael_defconfig

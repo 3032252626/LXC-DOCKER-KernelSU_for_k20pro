@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read config.env
+      - name: 读取配置文件
         run: |
           cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
           cat config.env | grep KERNEL_SOURCE_BRANCH= >> $GITHUB_ENV
@@ -24,25 +24,25 @@ jobs:
           cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
           cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
 
-      - name: Install deps
+      - name: 安装编译依赖
         run: |
           sudo apt-get update
           sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-      - name: Download zyc clang
+      - name: 下载zyc编译器
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           mkdir clang-zyc
           wget https://github.com/ZyCromerZ/Clang/releases/download/18.0.0-20230903-release/Clang-18.0.0-20230903.tar.gz
           tar -C clang-zyc/ -zxf Clang-18.0.0-20230903.tar.gz
 
-      - name: Download kernel source
+      - name: 下载内核源码
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
 
-      - name: Enable LXC/Docker config
+      - name: 开启LXC/Docker配置
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
@@ -59,14 +59,14 @@ jobs:
           echo "CONFIG_NF_TABLES_IPV4=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           echo "CONFIG_NF_TABLES_IPV6=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
-      - name: xt_qtaguid patch
+      - name: 应用xt_qtaguid补丁
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
           patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
 
-      - name: Droidspaces config supplement
+      - name: Droidspaces配置补充
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           CONFIG_FILE="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}"
@@ -130,7 +130,7 @@ jobs:
           check_add CONFIG_NETFILTER_XT_MATCH_CGROUP y
           check_add CONFIG_RESOURCE_COUNTERS y
 
-      - name: Droidspaces kernel patches
+      - name: Droidspaces内核补丁
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -139,7 +139,7 @@ jobs:
           echo "[2/2] cgroup prefix fix"
           curl -LSs "https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch" | patch -p1 || echo "[WARN] patch 02 skipped"
 
-      - name: runc patch
+      - name: 应用runc补丁
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           wget https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh
@@ -147,7 +147,7 @@ jobs:
           if [ -f android-kernel/kernel/cgroup.c ]; then ./runcpatch.sh android-kernel/kernel/cgroup.c; fi
           if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c; fi
 
-      - name: clang fix
+      - name: 修复clang编译
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           sed -i "s/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g" arch/arm64/configs/${{ env.KERNEL_CONFIG }}
@@ -155,19 +155,19 @@ jobs:
           chmod u+x clangfix3.sh
           ./clangfix3.sh || true
 
-      - name: KernelSU
+      - name: 配置KernelSU
         if: env.ENABLE_KERNELSU == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
 
-      - name: ccache
+      - name: 设置编译缓存
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: build-5.4-zyc
           max-size: 2G
 
-      - name: Build
+      - name: 开始编译内核
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin:$PATH
@@ -180,7 +180,7 @@ jobs:
           make -j$(nproc --all) CONFIG_DEBUG_SECTION_MISMATCH=y CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
           fi
 
-      - name: Package AnyKernel3
+      - name: 打包AnyKernel3
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           git clone https://github.com/osm0sis/AnyKernel3

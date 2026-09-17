@@ -26,8 +26,6 @@ jobs:
 
       run: |
 
-        sed -i 's/\r$//' config.env
-
         cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
 
         cat config.env | grep KERNEL_SOURCE_BRANCH= >> $GITHUB_ENV
@@ -48,7 +46,9 @@ jobs:
 
         cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
 
+        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
 
+        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
 
     - name: 构建编译内核环境
 
@@ -119,12 +119,9 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace
 
-        if [ -f android-kernel/net/netfilter/xt_qtaguid.c ]; then
-          wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
-          patch -p1 -d android-kernel < xt_qtaguid.patch && echo "[OK] xt_qtaguid.patch 应用成功" || echo "[WARN] xt_qtaguid.patch 应用失败（上下文不匹配）"
-        else
-          echo "[SKIP] 内核不含 net/netfilter/xt_qtaguid.c，xt_qtaguid.patch 无需应用"
-        fi
+        wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
+
+        patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
 
     - name: Droidspaces Non-GKI 内核配置补充
 
@@ -195,11 +192,6 @@ jobs:
         check_add CONFIG_NF_CONNTRACK_IPV4 y
         check_add CONFIG_NF_NAT_IPV4 y
         check_add CONFIG_IP_NF_NAT y
-        check_add CONFIG_DEVPTS_MULTIPLE_INSTANCES y
-        check_add CONFIG_MEMCG_KMEM y
-        check_add CONFIG_BINFMT_MISC y
-        check_add CONFIG_NETFILTER_XT_MATCH_CGROUP y
-        check_add CONFIG_RESOURCE_COUNTERS y
 
         echo ""
         echo "=== 配置补充完成：新增 $added 项，跳过 $skipped 项 ==="
@@ -214,31 +206,15 @@ jobs:
 
         echo "=== 应用 Droidspaces Non-GKI 补丁 ==="
 
-        echo "[1/2] 修复 xt_qtaguid 内核 panic（仅当内核含该模块时应用）"
-        if [ -f net/netfilter/xt_qtaguid.c ]; then
-          if curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch | patch -p1; then
-            echo "[OK] 补丁 01 应用成功"
-          else
-            echo "[WARN] 补丁 01 应用失败（可能已存在或冲突）"
-          fi
-        else
-          echo "[SKIP] 补丁 01：内核不含 xt_qtaguid 模块，无需应用"
-        fi
+        echo "[1/2] 修复 xt_qtaguid 内核 panic"
+        curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch | patch -p1 || echo "[WARN] 补丁 01 应用失败（可能已存在或冲突）"
 
-        echo "[2/2] 修复 cgroup 文件前缀处理（oss-base 已内建则跳过）"
-        if grep -q "kernfs_create_link(cgrp->kn, name, kn)" kernel/cgroup/cgroup.c; then
-          echo "[SKIP] 补丁 02：oss-base 已内建 cgroup 前缀处理代码，无需应用"
-        else
-          if curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch | patch -p1; then
-            echo "[OK] 补丁 02 应用成功"
-          else
-            echo "[WARN] 补丁 02 应用失败（可能已存在或冲突）"
-          fi
-        fi
+        echo "[2/2] 修复 cgroup 文件前缀处理"
+        curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch | patch -p1 || echo "[WARN] 补丁 02 应用失败（可能已存在或冲突）"
 
         echo "=== 补丁应用完毕 ==="
 
-    - name: 配置 ksu（方案1：kprobe）
+    - name: 配置 ksu（方案1：非GKI兼容fork）
 
       if: env.ENABLE_KERNELSU == 'true'
 
@@ -246,9 +222,9 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        # KernelSU 由官方 tiann/KernelSU setup.sh 动态注入，固定 v0.9.5（非 GKI 版本）
+        # 使用自有fork（3032252626/KernelSU），源自rsuntk/KernelSU非GKI backport
 
-        # 非 GKI 适配由下方「配置KernelSU kprobe（方案1）」步骤补齐
+        # 官方tiann/KernelSU自v1.0起放弃非GKI支持
 
         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
 
@@ -315,7 +291,7 @@ jobs:
 
       with:
 
-        key: raphael-kernel-droidspaces
+        key: build-kernel-mido-kernel-droidspaces
 
         max-size: 2G
 
@@ -341,20 +317,23 @@ jobs:
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
 
-        sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
-
-        export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
 
         export KBUILD_BUILD_HOST=17
+
         export KBUILD_BUILD_USER=HyperPower
 
-        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
 
-        make O=out ARCH=arm64 olddefconfig
+        if [ ${{env.LLVM_CONFIG}}=y ]; then
 
-        make O=out ARCH=arm64 -j$(nproc) Image.gz KCFLAGS="-Wno-error -Wno-error=maybe-uninitialized -Wno-error=address -Wno-error=unused-function -Wno-error=unused-variable -Wno-error=enum-int-mismatch -Wno-error=misleading-indentation"
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
+
+        else
+
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+
+        fi
 
                 
 
@@ -372,11 +351,11 @@ jobs:
 
         sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
 
-        cp android-kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
-
-        echo "NOT copying dtb - split_boot keeps ROM's original dtb"
+        cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
 
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
+
+        rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
 
     
 
@@ -391,3 +370,4 @@ jobs:
         name: ${{ env.KERNEL_ZIP_NAME }}
 
         path: kernel_workspace/AnyKernel3/*
+

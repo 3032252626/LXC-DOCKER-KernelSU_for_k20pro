@@ -42,14 +42,102 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel_workspace
           git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
 
-      - name: Enable LXC/Docker
+      - name: Enable LXC/Docker config
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
-          wget https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/add-lxc-docker-custom.sh
-          chmod 755 add-lxc-docker-custom.sh
-          ./add-lxc-docker-custom.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/LXC-DOCKER-OPEN-CONFIG.sh
+          chmod 755 LXC-DOCKER-OPEN-CONFIG.sh
+          sed -i '/^CONFIG_PID_NS=/d' android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          sed -i '/^CONFIG_BRIDGE_NETFILTER=/d' android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          echo "CONFIG_PID_NS=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          echo "CONFIG_BRIDGE_NETFILTER=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          ./LXC-DOCKER-OPEN-CONFIG.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }} -w
           echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          echo "CONFIG_IP6_NF_IPTABLES=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          echo "CONFIG_IP6_NF_FILTER=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          echo "CONFIG_NF_TABLES_IPV4=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          echo "CONFIG_NF_TABLES_IPV6=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
+      - name: xt_qtaguid patch
+        if: env.ENABLE_LXC_DOCKER == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
+          patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
+
+      - name: Droidspaces config supplement
+        if: env.ENABLE_LXC_DOCKER == 'true'
+        run: |
+          CONFIG_FILE="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}"
+          check_add() {
+            local key="$1" val="$2"
+            if grep -q "^${key}=" "$CONFIG_FILE"; then
+              echo "[SKIP] $key"
+            else
+              echo "$key=$val" >> "$CONFIG_FILE"
+              echo "[ADD]  $key=$val"
+            fi
+          }
+          check_add CONFIG_SYSCTL y
+          check_add CONFIG_SYSVIPC y
+          check_add CONFIG_POSIX_MQUEUE y
+          check_add CONFIG_NAMESPACES y
+          check_add CONFIG_UTS_NS y
+          check_add CONFIG_IPC_NS y
+          check_add CONFIG_SECCOMP y
+          check_add CONFIG_SECCOMP_FILTER y
+          check_add CONFIG_CGROUPS y
+          check_add CONFIG_CGROUP_DEVICE y
+          check_add CONFIG_CGROUP_PIDS y
+          check_add CONFIG_MEMCG y
+          check_add CONFIG_CGROUP_SCHED y
+          check_add CONFIG_FAIR_GROUP_SCHED y
+          check_add CONFIG_CGROUP_FREEZER y
+          check_add CONFIG_CGROUP_NET_PRIO y
+          check_add CONFIG_DEVTMPFS y
+          check_add CONFIG_OVERLAY_FS y
+          check_add CONFIG_TMPFS_POSIX_ACL y
+          check_add CONFIG_TMPFS_XATTR y
+          check_add CONFIG_FW_LOADER y
+          check_add CONFIG_FW_LOADER_USER_HELPER y
+          check_add CONFIG_FW_LOADER_COMPRESS y
+          check_add CONFIG_NET_NS y
+          check_add CONFIG_VETH y
+          check_add CONFIG_BRIDGE y
+          check_add CONFIG_NETFILTER y
+          check_add CONFIG_BRIDGE_NETFILTER y
+          check_add CONFIG_NETFILTER_ADVANCED y
+          check_add CONFIG_NF_CONNTRACK y
+          check_add CONFIG_IP_NF_IPTABLES y
+          check_add CONFIG_IP_NF_FILTER y
+          check_add CONFIG_NF_NAT y
+          check_add CONFIG_NF_TABLES y
+          check_add CONFIG_IP_NF_TARGET_MASQUERADE y
+          check_add CONFIG_NETFILTER_XT_TARGET_MASQUERADE y
+          check_add CONFIG_NETFILTER_XT_TARGET_TCPMSS y
+          check_add CONFIG_NETFILTER_XT_MATCH_ADDRTYPE y
+          check_add CONFIG_NF_CONNTRACK_NETLINK y
+          check_add CONFIG_NF_NAT_REDIRECT y
+          check_add CONFIG_IP_ADVANCED_ROUTER y
+          check_add CONFIG_IP_MULTIPLE_TABLES y
+          check_add CONFIG_NF_CONNTRACK_IPV4 y
+          check_add CONFIG_NF_NAT_IPV4 y
+          check_add CONFIG_IP_NF_NAT y
+          check_add CONFIG_DEVPTS_MULTIPLE_INSTANCES y
+          check_add CONFIG_MEMCG_KMEM y
+          check_add CONFIG_BINFMT_MISC y
+          check_add CONFIG_NETFILTER_XT_MATCH_CGROUP y
+          check_add CONFIG_RESOURCE_COUNTERS y
+
+      - name: Droidspaces kernel patches
+        if: env.ENABLE_LXC_DOCKER == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          echo "[1/2] xt_qtaguid panic fix"
+          curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch | patch -p1 || echo "[WARN] patch 01 skipped"
+          echo "[2/2] cgroup prefix fix"
+          curl -LSs "https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch" | patch -p1 || echo "[WARN] patch 02 skipped"
 
       - name: runc patch
         run: |
@@ -65,7 +153,7 @@ jobs:
           sed -i "s/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g" arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           wget https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/v3.0.0-stable/clangfix3.sh
           chmod u+x clangfix3.sh
-          ./clangfix3.sh
+          ./clangfix3.sh || true
 
       - name: KernelSU
         if: env.ENABLE_KERNELSU == 'true'

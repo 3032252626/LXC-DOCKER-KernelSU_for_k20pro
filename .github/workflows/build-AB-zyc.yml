@@ -142,7 +142,7 @@ jobs:
       - name: 应用runc补丁
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
-          wget https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh || echo 'runcpatch not found, skip'
+          wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/scripts-legacy/runcpatch.sh
           chmod a+x runcpatch.sh
           if [ -f android-kernel/kernel/cgroup.c ]; then ./runcpatch.sh android-kernel/kernel/cgroup.c; fi
           if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c; fi
@@ -151,7 +151,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           sed -i "s/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g" arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-          wget https://github.com/fate-think/LXC-DOCKER-KernelSU_Action/releases/download/v3.0.0-stable/clangfix3.sh
+          wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/scripts-legacy/clangfix2.sh
           chmod u+x clangfix3.sh
           ./clangfix3.sh || true
 

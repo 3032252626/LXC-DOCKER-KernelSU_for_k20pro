@@ -369,4 +369,3 @@ jobs:
         name: ${{ env.KERNEL_ZIP_NAME }}
 
         path: kernel_workspace/AnyKernel3/*
-

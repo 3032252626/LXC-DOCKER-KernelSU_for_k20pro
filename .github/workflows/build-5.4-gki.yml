@@ -1,0 +1,69 @@
+name: build-5.4-gki
+run-name: Build 5.4 GKI KSU LXC
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          repository: 3032252626/kernel_xiaomi_raphael-5.4
+          ref: zundamon-miui-5.4
+          path: kernel
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc flex bison libssl-dev libelf-dev zip
+
+      - name: Download clang
+        run: |
+          mkdir -p tc
+          wget -q https://github.com/LineageOS/android_prebuilts_clang_host_linux-x86_clang-r450784d/archive/refs/heads/main.tar.gz -O /tmp/tc.tar.gz
+          tar xf /tmp/tc.tar.gz --strip-components=1 -C tc
+          tc/bin/clang --version | head -1
+
+      - name: KernelSU
+        run: |
+          cd kernel
+          curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -s v0.9.5
+
+      - name: LXC Docker config
+        run: |
+          cd kernel
+          echo "CONFIG_PID_NS=y" >> arch/arm64/configs/raphael_defconfig
+          echo "CONFIG_NET_NS=y" >> arch/arm64/configs/raphael_defconfig
+          echo "CONFIG_CGROUP_PIDS=y" >> arch/arm64/configs/raphael_defconfig
+          echo "CONFIG_CGROUP_DEVICE=y" >> arch/arm64/configs/raphael_defconfig
+          echo "CONFIG_CHECKPOINT_RESTORE=y" >> arch/arm64/configs/raphael_defconfig
+          echo "CONFIG_POSIX_MQUEUE=y" >> arch/arm64/configs/raphael_defconfig
+          echo "CONFIG_USER_NS=y" >> arch/arm64/configs/raphael_defconfig
+
+      - name: Build
+        run: |
+          cd kernel
+          export PATH=$GITHUB_WORKSPACE/tc/bin:$PATH
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          make O=out ARCH=arm64 raphael_defconfig
+          make O=out ARCH=arm64 olddefconfig
+          make O=out ARCH=arm64 -j$(nproc) CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- Image.gz
+
+      - name: Package
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3 ak3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' ak3/anykernel.sh
+          sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' ak3/anykernel.sh
+          sed -i 's/is_slot_device=1;/is_slot_device=0;/g' ak3/anykernel.sh
+          cp kernel/out/arch/arm64/boot/Image.gz ak3/
+          cd ak3
+          zip -r9 ../raphael-5.4-ksu-lxc.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raphael-5.4-ksu-lxc
+          path: raphael-5.4-ksu-lxc.zip

@@ -18,7 +18,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc flex bison libssl-dev libelf-dev zip p7zip-full
+          sudo apt-get install -y bc flex bison libssl-dev libelf-dev zip p7zip-full gcc-aarch64-linux-gnu
 
       - name: Download clang
         run: |
@@ -49,7 +49,7 @@ jobs:
           export PATH=$GITHUB_WORKSPACE/tc/bin:$GITHUB_WORKSPACE/tc/aarch64-linux-gnu/bin:$GITHUB_WORKSPACE/tc/arm-linux-gnueabi/bin:$PATH
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          make O=out ARCH=arm64 raphael_defconfig
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- raphael_defconfig
           make O=out ARCH=arm64 olddefconfig
           make O=out ARCH=arm64 -j$(nproc) CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- Image.gz
 

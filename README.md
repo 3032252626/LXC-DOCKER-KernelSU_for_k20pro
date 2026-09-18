@@ -4,32 +4,27 @@
 
 > **声明**：本仓库工作流及补丁体系均源自上游社区，未进行自主开发维护。编译适配、问题排查与修复均由 AI 辅助完成。
 
+> **当前状态（2026-09-18 更新）**：已从 4.14 非 GKI 内核迁移到 **5.4.302 GKI 内核**（fork 自 HeliumStudio-Dev/kernel_xiaomi_raphael-5.4）。5.4 内核已内置 KernelSU（backslashxx/KernelSU v3.2.5+），无需 setup.sh 注入。以下文档中标注 `[4.14遗留]` 的内容仅供历史参考，不适用于当前 5.4 编译。
+
 ### 实测环境
 
 | 项目 | 说明 |
 |------|------|
-| 设备 | Redmi K20 Pro 尊享版（raphael，4.14 非 GKI 内核） |
-| 内核 | `4.14.357-Zundamon-v4.1-LXC` |
-| 容器 | Droidspaces（Debian13 + 青龙 + 1Panel） |
-| 管理器 | KernelSU v0.9.5（最后支持非 GKI 的官方版本） |
-
-### KernelSU 非 GKI 适配说明
-
-KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库默认工作流通过官方 [tiann/KernelSU](https://github.com/tiann/KernelSU) 的 `setup.sh` 集成 **v0.9.5**（最后支持非 GKI 的版本），配套使用 v0.9.5 管理器。
-
-如需新版 v3.x 协议（支持 Android 16 等），可改用社区维护的 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) backport fork（持续 backport 至 4.4~6.18 内核），注入 legacy tag 并配套使用 rsuntk legacy 管理器。
-
-> **注意**：非 GKI 设备切勿使用 rsuntk 的 `main` 分支注入（其跟随官方 v3.x GKI 代码），否则编出的 KSU 模块无法被任何管理器识别。
+| 设备 | Redmi K20 Pro（raphael，骁龙855 sm8150） |
+| 当前内核 | `5.4.302-GKI-Zundamon-NEXT-v1.0-alpha3` |
+| ROM | SOVIET-ANDROID 16.0（HyperOS 4，Android 17） |
+| 容器 | Droidspaces（Debian13）+ LXC/Docker |
+| KernelSU | 内核内置（backslashxx/KernelSU v3.2.5+），管理器需对应版本 |
 
 ---
 
 ## 一、项目介绍
 
-本仓库提供 GitHub Actions 工作流，一键编译支持 LXC/Docker 容器 + KernelSU 的安卓内核。
+本仓库提供 GitHub Actions 工作流，一键编译支持 LXC/Docker 容器的安卓内核。
 
 ### 内核版本
 
-`4.14`
+`5.4.302 GKI`（zundamon-miui-5.4 分支）
 
 ### 补丁与脚本
 
@@ -38,7 +33,8 @@ KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库默认工作流
 | `LXC-DOCKER-OPEN-CONFIG.sh` | [android-lxc-docker](https://github.com/3032252626/android-lxc-docker) | LXC/Docker 内核配置注入 |
 | `xt_qtaguid.patch` | 同上 | qtaguid 网络模块补丁 |
 | Droidspaces 补丁 01/02 | [Droidspaces-OSS](https://github.com/ravindu644/Droidspaces-OSS) | Non-GKI xt_qtaguid panic 修复 + cgroup 前缀处理 |
-| `setup.sh` (v0.9.5) | [tiann/KernelSU](https://github.com/tiann/KernelSU) | KernelSU 驱动集成（最后非 GKI 版） |
+| `runcpatch.sh` | 同上 scripts-legacy/ | runc cgroup 兼容补丁 |
+| `clangfix2.sh` | 同上 scripts-legacy/ | clang Makefile 兼容修复 |
 
 ---
 
@@ -56,92 +52,79 @@ KernelSU 官方自 v1.0 起放弃非 GKI 内核支持。本仓库默认工作流
 
 | 变量 | 说明 | 当前值 |
 |------|------|--------|
-| `KERNEL_SOURCE` | 内核源码仓库 | `https://github.com/3032252626/kernel_xiaomi_raphael` |
-| `KERNEL_SOURCE_BRANCH` | 内核源码分支 | `oss-base` |
+| `KERNEL_SOURCE` | 内核源码仓库 | `https://github.com/3032252626/kernel_xiaomi_raphael-5.4` |
+| `KERNEL_SOURCE_BRANCH` | 内核源码分支 | `zundamon-miui-5.4` |
 | `KERNEL_CONFIG` | defconfig 文件名 | `raphael_defconfig` |
-| `KERNEL_ZIP_NAME` | 产物 zip 命名 | `raphael_Zundamon-v4.1-LXC-KernelSU-rsuntk` |
-| `KERNEL_IMAGE_NAME` | 打包的内核镜像 | `Image.gz` |
+| `KERNEL_ZIP_NAME` | 产物 zip 命名 | `raphael_Zundamon-5.4-LXC` |
+| `KERNEL_IMAGE_NAME` | 打包的内核镜像 | `Image.gz`（GKI 不拼 DTB，无 Image.gz-dtb） |
 | `LLVM_CONFIG` | 是否启用 LLVM=1 / LLVM_IAS=1 | `n` |
 | `ENABLE_KVM` | 是否开启 KVM | `false` |
 | `ENABLE_LXC_DOCKER` | 是否开启 LXC/Docker | `true` |
-| `ENABLE_KERNELSU` | 是否集成 KernelSU | `true` |
-| `KERNELSU_TAG` | KernelSU 注入参考标签（方案1实际注入版本以工作流内 `bash -s` 为准） | `main` |
-| `ENABLE_PATH_UMOUNT` | 是否启用 path_umount | `true` |
-| `SWITCH_PYTHON` | 是否切换 python2（一般不需要） | `false` |
-| `NEED_DTBO` | 是否需要 dtbo（一般不需要） | `false` |
-
-> 注：方案1 工作流内 KernelSU 注入命令固定为 `bash -s v0.9.5`，`KERNELSU_TAG` 仅作记录参考；如需更换注入版本（如改用 rsuntk legacy），须直接修改工作流中对应 `curl | bash -s <tag>` 一行。
+| `ENABLE_KERNELSU` | 是否通过 setup.sh 注入 KSU | `false`（5.4 内核已内置 KSU，无需注入） |
+| `KERNELSU_TAG` | 保留备用 | `v0.9.5` |
+| `ENABLE_PATH_UMOUNT` | 是否启用 path_umount | `false` |
+| `SWITCH_PYTHON` | 是否切换 python2 | `false` |
+| `NEED_DTBO` | 是否需要 dtbo | `false` |
 
 ---
 
 ## 四、工作流选型
 
-### 常规编译
+### 主力编译（5.4 GKI）
 
-| 工作流 | 编译器 | 方案 |
+| 工作流 | 编译器 | 说明 |
 |--------|--------|------|
-| `build-AB-clang14.yml` | Google clang 14 | 方案1 - kprobe |
-| `build-AB-clang14-plan2.yml` | Google clang 14 | 方案2 - 手动源码补丁 |
+| `build-droidspaces-clang18.yml` | zyc clang 18.0.0 | **当前主力**，5.4 GKI 专用 |
+| `build-AB-Mandi-Sa.yml` | Mandi-Sa clang（codeberg） | 备用，codeberg 仓库已失效 |
+| `build-AB-zyc.yml` | zyc clang 18.0.0 | 备用 |
 
-### Droidspaces 编译（Non-GKI，推荐主力）
+### 旧版（4.14 遗留，不适用当前内核）
 
-Droidspaces 工作流在常规编译基础上额外注入 Non-GKI 必需的内核配置项（SYSVIPC、DEVTMPFS、cgroup/netfilter 等）并应用 Droidspaces-OSS 官方补丁，适合容器场景。
-
-| 工作流 | 编译器 | 方案 |
+| 工作流 | 编译器 | 说明 |
 |--------|--------|------|
-| `build-droidspaces-clang14.yml` | Google clang 14 | 方案1 - kprobe（默认） |
-| `build-droidspaces-clang14-plan2.yml` | Google clang 14 | 方案2 - 手动源码补丁 |
-
-> 方案1（kprobe）与方案2（手动源码补丁）二选一即可，config.env 通用。
+| `build-droidspaces-clang14.yml` | Google clang 14 | `[4.14遗留]` 旧 4.14 主工作流，clang14 不支持 5.4 GKI |
 
 ---
 
-## 五、常见编译问题
+## 五、编译适配记录（5.4 GKI + clang18）
 
-### DTC 链接报 yaml 未定义
+以下为从 4.14 迁移到 5.4 GKI 过程中遇到的编译错误及修复，记录备查：
 
+### 1. `netprio_cgroup.h: no member named 'id' in 'struct cgroup'`
+**原因**：`CONFIG_CGROUP_NET_PRIO=y` 导致编译 netprio_cgroup.h，但该头文件用了 `cgrp->id`，5.4 内核的 cgroup 结构体无此成员。
+**修复**：在 defconfig 中显式禁用 `# CONFIG_CGROUP_NET_PRIO is not set`。
+
+### 2. `htc_recv.c: snprintf will always be truncated [-Werror,-Wfortify-source]`
+**原因**：clang18 对 WiFi 驱动的 fortify-source 检查过严，旧代码 snprintf 缓冲区太小。
+**修复**：编译命令加 `KCFLAGS="-Wno-error=fortify-source"`。
+
+### 3. `ld.lld: error: undefined symbol: probe_user_write`
+**原因**：btrfs 代码 backport 不完整，引用了 `probe_user_write` 但未实现。
+**修复**：禁用 BTRFS（`# CONFIG_BTRFS_FS is not set`），LXC/Docker 不需要 btrfs。
+
+### 4. AnyKernel3 刷入报 "Unable to determine boot partition"
+**原因**：上游 AnyKernel3 的 anykernel.sh 用大写 `BLOCK=` 和 `IS_SLOT_DEVICE=`，sed 必须匹配大写。
+**修复**：
 ```bash
-sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=auto;!g' AnyKernel3/anykernel.sh
+sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=auto;/g' AnyKernel3/anykernel.sh
 ```
 
-### struct timespec 与 timespec64 不兼容
-
-```bash
-sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c fs/btrfs/file.c
-```
-
-### arch/arm64/mm/hugetlbpage.c 编译报错
-
-```bash
-sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
-```
-
-### AnyKernel3 刷入报 "Unable to determine boot partition"
-
-sed 必须匹配大写 `BLOCK=`：
-
-```bash
-sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
-```
-
-### Droidspaces 容器启动失败
-
-确认内核已开启 `CONFIG_SYSVIPC=y` 和 `CONFIG_DEVTMPFS=y`。这两个是 Droidspaces 致命依赖，缺失需重编译内核。
-
-### KernelSU 管理器报"只支持 GKI 内核"
-
-- 官方 tiann 管理器 v3.x 仅支持 GKI，非 GKI 设备请使用 v0.9.5 内核 + v0.9.5 管理器，或改用 rsuntk legacy 内核 + legacy 管理器。
-- 自编译非 GKI 内核必须用 rsuntk 的 **legacy tag** 注入（如 `bash -s v3.2.2-10-legacy`），不可用 `main` 分支。
-- 排查时优先看管理器显示的 KSU 驱动版本号，而非内核 uname：v0.9.5 特征为驱动版本 11872，rsuntk legacy 特征为 32447。
+### 5. fate-think release 死链
+**原因**：fate-think/LXC-DOCKER-KernelSU_Action 的 releases 已删除，runcpatch.sh 和 clangfix3.sh 下载 404。
+**修复**：改用本仓库 android-lxc-docker 的 `scripts-legacy/` 下备份（runcpatch.sh、clangfix2.sh）。
 
 ---
 
-## 六、KernelSU 双方案说明
+## 六、KernelSU 说明
 
-| 方案 | 原理 | 优缺点 |
-|------|------|--------|
-| 方案1 - kprobe | 依赖 `CONFIG_KPROBES`，KernelSU 自动注入 hook | 简洁，但需要内核开启 kprobe |
-| 方案2 - 手动源码补丁 | 直接修改 `fs/exec.c`/`open.c`/`read_write.c`/`stat.c` 注入 KSU 回调 | 不依赖 kprobe，兼容性更好 |
+### 当前方案（5.4 GKI）
+
+内核源码已内置 KernelSU（`drivers/staging/kernelsu/`，来自 backslashxx/KernelSU v3.2.5+），Kconfig 中 `CONFIG_KSU` 默认 y，无需工作流 setup.sh 注入。刷入后装对应版本管理器即可。
+
+### [4.14遗留] 旧版方案
+
+`[4.14遗留]` 4.14 非 GKI 时代通过 `tiann/KernelSU` 的 `setup.sh` 注入 v0.9.5（最后支持非 GKI 的官方版本）。此方案已弃用，仅存档。
 
 ---
 
@@ -149,9 +132,8 @@ sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/b
 
 - [AnyKernel3](https://github.com/osm0sis/AnyKernel3)
 - [AOSP](https://android.googlesource.com)
-- [KernelSU](https://github.com/tiann/KernelSU)（非 GKI 兼容由 [rsuntk/KernelSU](https://github.com/rsuntk/KernelSU) 提供）
+- [KernelSU](https://github.com/tiann/KernelSU)
+- [HeliumStudio-Dev](https://github.com/HeliumStudio-Dev)（5.4 GKI 内核源码）
 - [wu17481748](https://github.com/wu17481748/LXC-DOCKER-KernelSU_Action)
 - [ego-taboo](https://github.com/ego-taboo)
 - [Droidspaces-OSS](https://github.com/ravindu644/Droidspaces-OSS)
-- [xiaoleGun](https://github.com/xiaoleGun/KernelSU_Action)
-- [xiaoxindada](https://github.com/xiaoxindada)

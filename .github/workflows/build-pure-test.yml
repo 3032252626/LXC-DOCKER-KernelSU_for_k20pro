@@ -49,7 +49,11 @@ jobs:
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
           sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=auto;!g' AnyKernel3/anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=auto;/g' AnyKernel3/anykernel.sh
-          cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
+          cp android-kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
+          # Append DTB to kernel
+          cat android-kernel/out/arch/arm64/boot/dts/qcom/sm8150-v2.dtb >> AnyKernel3/Image.gz
+          mv AnyKernel3/Image.gz AnyKernel3/Image.gz-dtb
+          echo "kernel=$(ls -la AnyKernel3/Image.gz-dtb | awk '{print $5}')"
           rm -rf AnyKernel3/.git* AnyKernel3/README.md
           rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
 

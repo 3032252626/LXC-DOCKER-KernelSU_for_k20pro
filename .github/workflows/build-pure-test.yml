@@ -23,11 +23,11 @@ jobs:
           sudo apt-get update
           sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
 
-      - name: 下载zyc clang18
+      - name: 下载zyc clang14
         run: |
           mkdir clang
-          wget https://github.com/ZyCromerZ/Clang/releases/download/18.0.0-20230903-release/Clang-18.0.0-20230903.tar.gz
-          tar -C clang/ -zxf Clang-18.0.0-20230903.tar.gz
+          wget https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20260619-release/Clang-14.0.6-20260619.tar.gz
+          tar -C clang/ -zxf Clang-14.0.6-20260619.tar.gz
 
       - name: 下载内核源码
         run: |

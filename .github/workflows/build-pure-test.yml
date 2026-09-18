@@ -23,11 +23,11 @@ jobs:
           sudo apt-get update
           sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
 
-      - name: 下载AOSP clang r596125 (clang 22)
+      - name: 下载AOSP clang r416183b (clang 14)
         run: |
           mkdir clang
-          wget -q https://commondatastorage.googleapis.com/android-kernel/prebuilts/clang/linux-x86/clang-r596125.tar.gz
-          tar -C clang/ -zxf clang-r596125.tar.gz
+          wget -q https://commondatastorage.googleapis.com/android-kernel/prebuilts/clang/linux-x86/clang-r416183b.tar.gz
+          tar -C clang/ -zxf clang-r416183b.tar.gz
 
       - name: 下载内核源码
         run: |
@@ -36,11 +36,11 @@ jobs:
       - name: 编译内核
         run: |
           cd android-kernel
-          export PATH=$GITHUB_WORKSPACE/clang/clang-r596125/bin:$PATH
+          export PATH=$GITHUB_WORKSPACE/clang/clang-r416183b/bin:$PATH
           export KBUILD_BUILD_HOST=test
           export KBUILD_BUILD_USER=test
           make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-          make -j$(nproc --all) CONFIG_DEBUG_SECTION_MISMATCH=y CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
+          make -j$(nproc --all) CONFIG_DEBUG_SECTION_MISMATCH=y CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
 
       - name: 打包AnyKernel3
         run: |

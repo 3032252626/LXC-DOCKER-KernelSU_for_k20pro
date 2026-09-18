@@ -40,7 +40,7 @@ jobs:
           export KBUILD_BUILD_HOST=test
           export KBUILD_BUILD_USER=test
           make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-          make -j$(nproc --all) CONFIG_DEBUG_SECTION_MISMATCH=y KCFLAGS="-Wno-error=fortify-source" CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" Image.gz-dtb
+          make -j$(nproc --all) CONFIG_DEBUG_SECTION_MISMATCH=y KCFLAGS="-Wno-error=fortify-source" CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
           ls -la out/arch/arm64/boot/
 
       - name: 打包AnyKernel3
@@ -49,7 +49,8 @@ jobs:
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
           sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=auto;!g' AnyKernel3/anykernel.sh
           sed -i 's/IS_SLOT_DEVICE=0;/IS_SLOT_DEVICE=auto;/g' AnyKernel3/anykernel.sh
-          cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          cp android-kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
+          cp android-kernel/out/arch/arm64/boot/dts/qcom/sm8150-v2.dtb AnyKernel3/dtb.img
           rm -rf AnyKernel3/.git* AnyKernel3/README.md
           rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
 

@@ -93,7 +93,7 @@ jobs:
           check_add CONFIG_CGROUP_SCHED y
           check_add CONFIG_FAIR_GROUP_SCHED y
           check_add CONFIG_CGROUP_FREEZER y
-# skip CONFIG_CGROUP_NET_PRIO (causes compile error on clang18)
+          # skip CONFIG_CGROUP_NET_PRIO (causes compile error on clang18)
           check_add CONFIG_DEVTMPFS y
           check_add CONFIG_OVERLAY_FS y
           check_add CONFIG_TMPFS_POSIX_ACL y

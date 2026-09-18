@@ -54,6 +54,8 @@ jobs:
           echo "CONFIG_BRIDGE_NETFILTER=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           ./LXC-DOCKER-OPEN-CONFIG.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }} -w
           sed -i '/^CONFIG_CGROUP_NET_PRIO=/d' android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          sed -i "/^CONFIG_BTRFS_FS=/d" android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          echo "# CONFIG_BTRFS_FS is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           echo "# CONFIG_CGROUP_NET_PRIO is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           echo "CONFIG_IP6_NF_IPTABLES=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}

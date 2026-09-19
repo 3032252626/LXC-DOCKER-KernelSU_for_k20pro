@@ -1,0 +1,260 @@
+name: Zundamon-5.4 LXC/Docker [raphael]
+
+on:
+  workflow_dispatch:
+    inputs:
+      llvm_config:
+        description: 'LLVM=1 LLVM_IAS=1（CFI_CLANG 需要；编译报错时可改 n）'
+        required: false
+        default: 'y'
+      enable_lxc:
+        description: '注入 LXC/Docker 配置与补丁'
+        required: false
+        default: 'true'
+      build_dtbo:
+        description: '构建 dtbo.img'
+        required: false
+        default: 'true'
+
+jobs:
+  build:
+    name: Build Zundamon 5.4 LXC/Docker
+    runs-on: ubuntu-24.04
+    if: github.event.repository.owner.id == github.event.sender.id
+
+    steps:
+      - name: 拉取仓库
+        uses: actions/checkout@v4
+
+      - name: 读取 config.env
+        run: |
+          grep '^KERNEL_SOURCE=' config.env >> $GITHUB_ENV
+          grep '^KERNEL_SOURCE_BRANCH=' config.env >> $GITHUB_ENV
+          grep '^KERNEL_CONFIG=' config.env >> $GITHUB_ENV
+          grep '^KERNEL_ZIP_NAME=' config.env >> $GITHUB_ENV
+          grep '^KERNEL_IMAGE_NAME=' config.env >> $GITHUB_ENV
+          grep '^LLVM_CONFIG=' config.env >> $GITHUB_ENV
+          grep '^NEED_DTBO=' config.env >> $GITHUB_ENV
+          grep '^SWITCH_PYTHON=' config.env >> $GITHUB_ENV
+          grep '^ENABLE_KVM=' config.env >> $GITHUB_ENV
+          grep '^ENABLE_LXC_DOCKER=' config.env >> $GITHUB_ENV
+          grep '^ENABLE_KERNELSU=' config.env >> $GITHUB_ENV
+          grep '^KERNELSU_TAG=' config.env >> $GITHUB_ENV
+          if [ -n "${{ inputs.llvm_config }}" ]; then echo "LLVM_CONFIG=${{ inputs.llvm_config }}" >> $GITHUB_ENV; fi
+          if [ -n "${{ inputs.enable_lxc }}" ]; then echo "ENABLE_LXC_DOCKER=${{ inputs.enable_lxc }}" >> $GITHUB_ENV; fi
+          if [ -n "${{ inputs.build_dtbo }}" ]; then echo "NEED_DTBO=${{ inputs.build_dtbo }}" >> $GITHUB_ENV; fi
+          echo "===== 本次生效配置 ====="
+          grep -E '^(KERNEL_|LLVM_CONFIG|NEED_DTBO|ENABLE_|SWITCH_)' $GITHUB_ENV
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+          mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+
+      - name: 下载 clang 编译器
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          if git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp; then
+            echo "使用 AOSP clang (android13-release)"
+          else
+            echo "AOSP clang 下载失败，回退 ZyCromerZ Clang 18"
+            mkdir -p clang-aosp/clang-r450784d
+            wget -q https://github.com/ZyCromerZ/Clang/releases/download/18.0.0-20230903-release/Clang-18.0.0-20230903.tar.gz
+            tar -zxf Clang-18.0.0-20230903.tar.gz -C clang-aosp/clang-r450784d
+          fi
+          ls clang-aosp
+          $GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin/clang --version | head -3
+
+      - name: 下载内核源码
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
+          cd android-kernel && git log -1 --oneline
+
+      - name: 开启 LXC/Docker 配置
+        if: env.ENABLE_LXC_DOCKER == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          wget -q https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/LXC-DOCKER-OPEN-CONFIG.sh
+          chmod 755 LXC-DOCKER-OPEN-CONFIG.sh
+          CFG=android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          sed -i '/^CONFIG_PID_NS=/d' $CFG
+          sed -i '/^CONFIG_BRIDGE_NETFILTER=/d' $CFG
+          echo "CONFIG_PID_NS=y" >> $CFG
+          echo "CONFIG_BRIDGE_NETFILTER=y" >> $CFG
+          ./LXC-DOCKER-OPEN-CONFIG.sh $CFG -w
+          echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> $CFG
+          echo "CONFIG_IP6_NF_IPTABLES=y" >> $CFG
+          echo "CONFIG_IP6_NF_FILTER=y" >> $CFG
+          echo "CONFIG_NF_TABLES_IPV4=y" >> $CFG
+          echo "CONFIG_NF_TABLES_IPV6=y" >> $CFG
+
+      - name: 注入 Droidspaces Non-GKI 配置项
+        if: env.ENABLE_LXC_DOCKER == 'true'
+        run: |
+          CFG="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}"
+          added=0; skipped=0
+          check_add() {
+            local key="$1" val="$2"
+            if grep -q "^${key}=" "$CFG"; then skipped=$((skipped+1));
+            else echo "$key=$val" >> "$CFG"; echo "[ADD]  $key=$val"; added=$((added+1)); fi
+          }
+          check_add CONFIG_SYSCTL y
+          check_add CONFIG_SYSVIPC y
+          check_add CONFIG_POSIX_MQUEUE y
+          check_add CONFIG_NAMESPACES y
+          check_add CONFIG_PID_NS y
+          check_add CONFIG_UTS_NS y
+          check_add CONFIG_IPC_NS y
+          check_add CONFIG_SECCOMP y
+          check_add CONFIG_SECCOMP_FILTER y
+          check_add CONFIG_CGROUPS y
+          check_add CONFIG_CGROUP_DEVICE y
+          check_add CONFIG_CGROUP_PIDS y
+          check_add CONFIG_MEMCG y
+          check_add CONFIG_CGROUP_SCHED y
+          check_add CONFIG_FAIR_GROUP_SCHED y
+          check_add CONFIG_CGROUP_FREEZER y
+          check_add CONFIG_CGROUP_NET_PRIO y
+          check_add CONFIG_DEVTMPFS y
+          check_add CONFIG_OVERLAY_FS y
+          check_add CONFIG_TMPFS_POSIX_ACL y
+          check_add CONFIG_TMPFS_XATTR y
+          check_add CONFIG_FW_LOADER y
+          check_add CONFIG_FW_LOADER_USER_HELPER y
+          check_add CONFIG_FW_LOADER_COMPRESS y
+          check_add CONFIG_NET_NS y
+          check_add CONFIG_VETH y
+          check_add CONFIG_BRIDGE y
+          check_add CONFIG_NETFILTER y
+          check_add CONFIG_BRIDGE_NETFILTER y
+          check_add CONFIG_NETFILTER_ADVANCED y
+          check_add CONFIG_NF_CONNTRACK y
+          check_add CONFIG_IP_NF_IPTABLES y
+          check_add CONFIG_IP_NF_FILTER y
+          check_add CONFIG_NF_NAT y
+          check_add CONFIG_NF_TABLES y
+          check_add CONFIG_IP_NF_TARGET_MASQUERADE y
+          check_add CONFIG_NETFILTER_XT_TARGET_MASQUERADE y
+          check_add CONFIG_NETFILTER_XT_TARGET_TCPMSS y
+          check_add CONFIG_NETFILTER_XT_MATCH_ADDRTYPE y
+          check_add CONFIG_NF_CONNTRACK_NETLINK y
+          check_add CONFIG_NF_NAT_REDIRECT y
+          check_add CONFIG_IP_ADVANCED_ROUTER y
+          check_add CONFIG_IP_MULTIPLE_TABLES y
+          check_add CONFIG_NF_CONNTRACK_IPV4 y
+          check_add CONFIG_NF_NAT_IPV4 y
+          check_add CONFIG_IP_NF_NAT y
+          echo "=== 配置补充完成：新增 $added 项，跳过 $skipped 项 ==="
+
+      - name: 应用 xt_qtaguid / Droidspaces 补丁
+        if: env.ENABLE_LXC_DOCKER == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          wget -q https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
+          patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
+          cd android-kernel
+          curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch | patch -p1 || echo "[WARN] 补丁 01 应用失败"
+          curl -LSs "https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch" | patch -p1 || echo "[WARN] 补丁 02 应用失败"
+
+      - name: 修复 dtb/dtbo 构建（5.4 条件宏失配）
+        if: env.NEED_DTBO == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          MK=arch/arm64/boot/dts/qcom/Makefile
+          cp $MK $MK.bak
+          sed -i 's/CONFIG_MACH_XIAOMI_SM8150/CONFIG_ARCH_SM8150/g' $MK
+          if ! grep -q 'sm8150-v2.dtb' $MK; then sed -i '1i dtb-y += sm8150-v2.dtb' $MK; fi
+          echo "----- 修复后 qcom/Makefile -----"
+          cat $MK
+
+      - name: 源码编译修复
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+          sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c || true
+          if [ -f fs/btrfs/inode.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c || true; fi
+          if [ -f fs/btrfs/file.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c || true; fi
+
+      - name: 设置 ccache 缓存
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: build-raphael-5.4-lxc
+          max-size: 3G
+
+      - name: 生成 defconfig
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+          make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+
+      - name: 编译内核
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+          export KBUILD_BUILD_HOST=17
+          export KBUILD_BUILD_USER=HyperPower
+          if [ "${LLVM_CONFIG}" = "y" ]; then
+            echo ">>> 带 LLVM=1 LLVM_IAS=1 编译"
+            make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1
+          else
+            echo ">>> 不带 LLVM=1 编译"
+            make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          fi
+
+      - name: 编译结果核查
+        if: always()
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          ls -l out/arch/arm64/boot/ 2>/dev/null || true
+          if [ -f out/.config ]; then
+            echo "===== 关键配置 ====="
+            for k in CONFIG_CC_IS_CLANG CONFIG_CFI_CLANG CONFIG_LTO_CLANG CONFIG_LTO_CLANG_THIN CONFIG_MODULES CONFIG_MODVERSIONS CONFIG_KSU CONFIG_BUILD_ARM64_DT_OVERLAY CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_OVERLAY_FS CONFIG_CGROUPS; do
+              printf "%-38s %s\n" "$k" "$(grep -E "^${k}=" out/.config || echo '未启用/未设置')"
+            done
+          fi
+
+      - name: 构建 dtb 与 dtbo.img
+        if: env.NEED_DTBO == 'true'
+        continue-on-error: true
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+          if [ "${LLVM_CONFIG}" = "y" ]; then
+            make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 dtbs || true
+          else
+            make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- dtbs || true
+          fi
+          Q=out/arch/arm64/boot/dts/qcom
+          echo "----- 产物 -----"
+          ls -l $Q/*.dtb $Q/*.dtbo $Q/dtbo.img 2>/dev/null || true
+          if [ ! -f $Q/dtbo.img ] && [ -f $Q/sm8150-v2.dtb ] && [ -f $Q/raphael-sm8150-overlay.dtbo ]; then
+            echo ">>> 内核未自动生成 dtbo.img，手工合并"
+            python3 scripts/mkdtboimg.py create $Q/dtbo.img --page_size=4096 $Q/sm8150-v2.dtb $Q/raphael-sm8150-overlay.dtbo
+          fi
+
+      - name: 打包 AnyKernel3
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          git clone -q https://github.com/osm0sis/AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+          sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+          sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+          cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
+          rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+          ls -l AnyKernel3/
+
+      - name: 上传内核刷机包
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_ZIP_NAME }}
+          path: kernel_workspace/AnyKernel3/*
+
+      - name: 上传 dtbo.img
+        if: env.NEED_DTBO == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_ZIP_NAME }}-dtbo
+          path: kernel_workspace/android-kernel/out/arch/arm64/boot/dts/qcom/dtbo.img
+          if-no-files-found: warn

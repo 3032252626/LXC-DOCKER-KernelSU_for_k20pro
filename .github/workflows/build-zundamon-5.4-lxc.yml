@@ -49,7 +49,7 @@ jobs:
       - name: 安装编译依赖
         run: |
           sudo apt-get update
-          sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+          sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev pkg-config ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
       - name: 下载 clang 编译器
@@ -172,7 +172,11 @@ jobs:
       - name: 源码编译修复
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+          # 5.4 的 dtc 需链接 libyaml；强制写入链接库，避免 pkg-config 缺失导致 HOSTLD 失败
+          sed -i '/^HOSTLOADLIBES_dtc/d' scripts/dtc/Makefile
+          sed -i 's/^HOSTLDLIBS_dtc.*/HOSTLDLIBS_dtc := -lyaml/' scripts/dtc/Makefile
+          grep -q '^HOSTLDLIBS_dtc' scripts/dtc/Makefile || echo 'HOSTLDLIBS_dtc := -lyaml' >> scripts/dtc/Makefile
+          echo "--- dtc 链接配置 ---"; grep -n 'HOSTLDLIBS_dtc' scripts/dtc/Makefile
           sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c || true
           if [ -f fs/btrfs/inode.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c || true; fi
           if [ -f fs/btrfs/file.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c || true; fi

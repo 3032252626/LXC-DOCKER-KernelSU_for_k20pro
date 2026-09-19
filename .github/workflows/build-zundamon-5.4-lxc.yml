@@ -181,6 +181,11 @@ jobs:
           sed -i 's/idx = css->cgroup->id;/idx = css->id;/' include/net/netprio_cgroup.h
           if grep -q 'css->cgroup->id' include/net/netprio_cgroup.h; then echo "[ERROR] netprio 修复未生效"; exit 1; fi
           grep -n 'idx = css->id;' include/net/netprio_cgroup.h || true
+          # 旧版 fs API 统一到 5.4：probe_user_write/read -> copy_to_user_nofault/from_user_nofault
+          echo "--- probe_user_* 命中文件 ---"
+          grep -rln 'probe_user_write(\|probe_user_read(' --include='*.c' --include='*.h' . | head -20 || true
+          grep -rl 'probe_user_write(\|probe_user_read(' --include='*.c' --include='*.h' . | xargs -r sed -i 's/probe_user_write(/copy_to_user_nofault(/g; s/probe_user_read(/copy_from_user_nofault(/g'
+          grep -rn 'probe_user_write(\|probe_user_read(' --include='*.c' --include='*.h' . | head -10 || true
           if [ -f fs/btrfs/inode.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c || true; fi
           if [ -f fs/btrfs/file.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c || true; fi
 
@@ -203,11 +208,20 @@ jobs:
           export KBUILD_BUILD_HOST=17
           export KBUILD_BUILD_USER=HyperPower
           if [ "${LLVM_CONFIG}" = "y" ]; then
-            echo ">>> 带 LLVM=1 LLVM_IAS=1 编译"
-            make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1
+            echo ">>> 带 LLVM=1 LLVM_IAS=1 编译（-k 模式，一次性收集全部编译错误）"
+            make -k -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 > build_full.log 2>&1 || true
           else
-            echo ">>> 不带 LLVM=1 编译"
-            make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            echo ">>> 不带 LLVM=1 编译（-k 模式）"
+            make -k -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- > build_full.log 2>&1 || true
+          fi
+          echo "########## 编译错误汇总（去重） ##########"
+          grep -E "error:|fatal error:" build_full.log | sort -u | head -60 || true
+          echo "########## 镜像产物检查 ##########"
+          ls -l out/arch/arm64/boot/ 2>/dev/null || true
+          if [ ! -f out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} ]; then
+            echo "### 未生成 ${{ env.KERNEL_IMAGE_NAME }}，编译失败，日志尾部如下"
+            tail -n 60 build_full.log
+            exit 1
           fi
 
       - name: 编译结果核查

@@ -181,6 +181,12 @@ jobs:
           sed -i 's/idx = css->cgroup->id;/idx = css->id;/' include/net/netprio_cgroup.h
           if grep -q 'css->cgroup->id' include/net/netprio_cgroup.h; then echo "[ERROR] netprio 修复未生效"; exit 1; fi
           grep -n 'idx = css->id;' include/net/netprio_cgroup.h || true
+          # net/core/netprio_cgroup.c：css->cgroup->id 在 5.4 已不存在，统一改为 css->id
+          sed -i 's/css->cgroup->id/css->id/g' net/core/netprio_cgroup.c
+          grep -rl 'css->cgroup->id' --include='*.c' --include='*.h' . 2>/dev/null | xargs -r sed -i 's/css->cgroup->id/css->id/g'
+          echo "--- 残留 css->cgroup->id 检查 ---"
+          grep -rn 'css->cgroup->id' --include='*.c' --include='*.h' . 2>/dev/null | head -10 || echo "无残留"
+          grep -n 'css->id' net/core/netprio_cgroup.c | head -6
           # 旧版 fs API 统一到 5.4：probe_user_write/read -> copy_to_user_nofault/from_user_nofault
           echo "--- probe_user_* 命中文件 ---"
           grep -rln 'probe_user_write(\|probe_user_read(' --include='*.c' --include='*.h' . | head -20 || true

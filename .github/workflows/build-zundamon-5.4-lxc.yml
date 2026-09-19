@@ -177,7 +177,10 @@ jobs:
           sed -i 's/^HOSTLDLIBS_dtc.*/HOSTLDLIBS_dtc := -lyaml/' scripts/dtc/Makefile
           grep -q '^HOSTLDLIBS_dtc' scripts/dtc/Makefile || echo 'HOSTLDLIBS_dtc := -lyaml' >> scripts/dtc/Makefile
           echo "--- dtc 链接配置 ---"; grep -n 'HOSTLDLIBS_dtc' scripts/dtc/Makefile
-          sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c || true
+          # netprio_cgroup.h：5.4 的 struct cgroup 已无 id 成员，改用 css->id
+          sed -i 's/idx = css->cgroup->id;/idx = css->id;/' include/net/netprio_cgroup.h
+          if grep -q 'css->cgroup->id' include/net/netprio_cgroup.h; then echo "[ERROR] netprio 修复未生效"; exit 1; fi
+          grep -n 'idx = css->id;' include/net/netprio_cgroup.h || true
           if [ -f fs/btrfs/inode.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c || true; fi
           if [ -f fs/btrfs/file.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c || true; fi
 

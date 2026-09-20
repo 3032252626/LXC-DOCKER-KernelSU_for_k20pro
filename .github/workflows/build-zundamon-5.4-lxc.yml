@@ -212,7 +212,10 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           B=https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI
           apply_one() {
-            local url="$1" name="$2"
+            local url="$1" name="$2" target="$3"
+            if [ -n "$target" ] && [ ! -e "$target" ]; then
+              echo "[SKIP] $name：目标文件 $target 不存在，本内核树无需此补丁"; return 0
+            fi
             if ! curl -fsSL "$url" -o "/tmp/$name"; then
               echo "[FAIL] 下载失败: $name"; return 1
             fi
@@ -225,8 +228,8 @@ jobs:
             fi
           }
           # non-GKI 目录下仅有这两个补丁，第三方仓的 xt_qtaguid.patch 与 01 同文件同目的，不再重复应用
-          apply_one "$B/01.fix_kernel_panic_in_xt_qtaguid.patch" 01_xt_qtaguid.patch
-          apply_one "$B/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch" 02_cgroup_prefix.patch
+          apply_one "$B/01.fix_kernel_panic_in_xt_qtaguid.patch" 01_xt_qtaguid.patch net/netfilter/xt_qtaguid.c
+          apply_one "$B/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch" 02_cgroup_prefix.patch kernel/cgroup/cgroup.c
           echo "===== xt_qtaguid.c 改动确认 ====="
           git diff --stat net/netfilter/xt_qtaguid.c || true
           grep -n 'rtnl_link_stats64 \*stats' net/netfilter/xt_qtaguid.c | head -3 || true

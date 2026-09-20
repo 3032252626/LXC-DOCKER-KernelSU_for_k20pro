@@ -1,5 +1,12 @@
 name: Zundamon-5.4 LXC/Docker [raphael]
 
+# v3 相对 v2 的 5 处改动：
+#  1) 容器配置注入：改用「5.4 校准清单 + 末尾追加覆盖」方式，剔除 28 项该树不存在的符号与畸形项 CONFIG_!SCHED_WALT
+#  2) 补丁注入：去掉与我方仓 xt_qtaguid.patch 重复的应用（与官方 01 同文件同目的），改为 dry-run 幂等应用
+#  3) dtb/dtbo 构建：修正手工兜底（dtbo.img 只放 overlay，不再塞 base dtb），并加硬断言
+#  4) 打包：把 sm8150-v2.dtb（命名为 dtb）与 dtbo.img 一并放进 AnyKernel3，实现三件套同源一次卡刷
+#  5) 新增「容器配置自检」：对 out/.config 断言关键项已生效，并对调度类项断言保持关闭
+
 on:
   workflow_dispatch:
     inputs:
@@ -8,17 +15,17 @@ on:
         required: false
         default: 'y'
       enable_lxc:
-        description: '注入 LXC/Docker 配置与补丁'
+        description: 'true=容器版（注入 LXC/Docker 配置与 Droidspaces 补丁）；false=基线版（仅设备支持）'
         required: false
         default: 'true'
       build_dtbo:
-        description: '构建 dtbo.img'
+        description: '构建 dtb/dtbo.img 并打进卡刷包'
         required: false
         default: 'true'
 
 jobs:
   build:
-    name: Build Zundamon 5.4 LXC/Docker
+    name: Build Zundamon 5.4
     runs-on: ubuntu-24.04
     if: github.event.repository.owner.id == github.event.sender.id
 
@@ -72,91 +79,150 @@ jobs:
           git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
           cd android-kernel && git log -1 --oneline
 
-      - name: 开启 LXC/Docker 配置
+      - name: 容器能力注入（5.4 校准清单）
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace
-          wget -q https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/LXC-DOCKER-OPEN-CONFIG.sh
-          chmod 755 LXC-DOCKER-OPEN-CONFIG.sh
-          CFG=android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-          sed -i '/^CONFIG_PID_NS=/d' $CFG
-          sed -i '/^CONFIG_BRIDGE_NETFILTER=/d' $CFG
-          echo "CONFIG_PID_NS=y" >> $CFG
-          echo "CONFIG_BRIDGE_NETFILTER=y" >> $CFG
-          ./LXC-DOCKER-OPEN-CONFIG.sh $CFG -w
-          echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> $CFG
-          echo "CONFIG_IP6_NF_IPTABLES=y" >> $CFG
-          echo "CONFIG_IP6_NF_FILTER=y" >> $CFG
-          echo "CONFIG_NF_TABLES_IPV4=y" >> $CFG
-          echo "CONFIG_NF_TABLES_IPV6=y" >> $CFG
-
-      - name: 注入 Droidspaces Non-GKI 配置项
-        if: env.ENABLE_LXC_DOCKER == 'true'
-        run: |
+          set -e
           CFG="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}"
-          added=0; skipped=0
-          check_add() {
-            local key="$1" val="$2"
-            if grep -q "^${key}=" "$CFG"; then skipped=$((skipped+1));
-            else echo "$key=$val" >> "$CFG"; echo "[ADD]  $key=$val"; added=$((added+1)); fi
-          }
-          check_add CONFIG_SYSCTL y
-          check_add CONFIG_SYSVIPC y
-          check_add CONFIG_POSIX_MQUEUE y
-          check_add CONFIG_NAMESPACES y
-          check_add CONFIG_PID_NS y
-          check_add CONFIG_UTS_NS y
-          check_add CONFIG_IPC_NS y
-          check_add CONFIG_SECCOMP y
-          check_add CONFIG_SECCOMP_FILTER y
-          check_add CONFIG_CGROUPS y
-          check_add CONFIG_CGROUP_DEVICE y
-          check_add CONFIG_CGROUP_PIDS y
-          check_add CONFIG_MEMCG y
-          check_add CONFIG_CGROUP_SCHED y
-          check_add CONFIG_FAIR_GROUP_SCHED y
-          check_add CONFIG_CGROUP_FREEZER y
-          check_add CONFIG_CGROUP_NET_PRIO y
-          check_add CONFIG_DEVTMPFS y
-          check_add CONFIG_OVERLAY_FS y
-          check_add CONFIG_TMPFS_POSIX_ACL y
-          check_add CONFIG_TMPFS_XATTR y
-          check_add CONFIG_FW_LOADER y
-          check_add CONFIG_FW_LOADER_USER_HELPER y
-          check_add CONFIG_FW_LOADER_COMPRESS y
-          check_add CONFIG_NET_NS y
-          check_add CONFIG_VETH y
-          check_add CONFIG_BRIDGE y
-          check_add CONFIG_NETFILTER y
-          check_add CONFIG_BRIDGE_NETFILTER y
-          check_add CONFIG_NETFILTER_ADVANCED y
-          check_add CONFIG_NF_CONNTRACK y
-          check_add CONFIG_IP_NF_IPTABLES y
-          check_add CONFIG_IP_NF_FILTER y
-          check_add CONFIG_NF_NAT y
-          check_add CONFIG_NF_TABLES y
-          check_add CONFIG_IP_NF_TARGET_MASQUERADE y
-          check_add CONFIG_NETFILTER_XT_TARGET_MASQUERADE y
-          check_add CONFIG_NETFILTER_XT_TARGET_TCPMSS y
-          check_add CONFIG_NETFILTER_XT_MATCH_ADDRTYPE y
-          check_add CONFIG_NF_CONNTRACK_NETLINK y
-          check_add CONFIG_NF_NAT_REDIRECT y
-          check_add CONFIG_IP_ADVANCED_ROUTER y
-          check_add CONFIG_IP_MULTIPLE_TABLES y
-          check_add CONFIG_NF_CONNTRACK_IPV4 y
-          check_add CONFIG_NF_NAT_IPV4 y
-          check_add CONFIG_IP_NF_NAT y
-          echo "=== 配置补充完成：新增 $added 项，跳过 $skipped 项 ==="
+          cp "$CFG" "${CFG}.pre-kw"
 
-      - name: 应用 xt_qtaguid / Droidspaces 补丁
+          # 清掉历史注入遗留的畸形行
+          sed -i '/^CONFIG_!/d' "$CFG"
+
+          # 5.4 有效符号清单（已剔除该树不存在的 28 项旧符号）
+          cat > /tmp/kwanted.txt <<'KWLIST'
+          CONFIG_NAMESPACES
+          CONFIG_PID_NS
+          CONFIG_NET_NS
+          CONFIG_UTS_NS
+          CONFIG_IPC_NS
+          CONFIG_USER_NS
+          CONFIG_MULTIUSER
+          CONFIG_SYSCTL
+          CONFIG_SYSVIPC
+          CONFIG_POSIX_MQUEUE
+          CONFIG_SECCOMP_FILTER
+          CONFIG_CGROUPS
+          CONFIG_CGROUP_DEVICE
+          CONFIG_CGROUP_PIDS
+          CONFIG_CGROUP_FREEZER
+          CONFIG_CGROUP_SCHED
+          CONFIG_FAIR_GROUP_SCHED
+          CONFIG_CGROUP_CPUACCT
+          CONFIG_CGROUP_NET_PRIO
+          CONFIG_CGROUP_NET_CLASSID
+          CONFIG_CGROUP_PERF
+          CONFIG_CGROUP_HUGETLB
+          CONFIG_HUGETLBFS
+          CONFIG_MEMCG
+          CONFIG_MEMCG_SWAP
+          CONFIG_MEMCG_SWAP_ENABLED
+          CONFIG_BLK_CGROUP
+          CONFIG_BLK_DEV_THROTTLING
+          CONFIG_CFS_BANDWIDTH
+          CONFIG_CPUSETS
+          CONFIG_DEVTMPFS
+          CONFIG_TMPFS
+          CONFIG_OVERLAY_FS
+          CONFIG_FHANDLE
+          CONFIG_EXT4_FS_POSIX_ACL
+          CONFIG_EXT4_FS_SECURITY
+          CONFIG_KEYS
+          CONFIG_VETH
+          CONFIG_BRIDGE
+          CONFIG_BRIDGE_NETFILTER
+          CONFIG_BRIDGE_VLAN_FILTERING
+          CONFIG_VLAN_8021Q
+          CONFIG_MACVLAN
+          CONFIG_IPVLAN
+          CONFIG_DUMMY
+          CONFIG_TUN
+          CONFIG_VXLAN
+          CONFIG_NETFILTER
+          CONFIG_NETFILTER_ADVANCED
+          CONFIG_NETFILTER_XTABLES
+          CONFIG_NF_CONNTRACK
+          CONFIG_NF_NAT
+          CONFIG_NF_NAT_MASQUERADE
+          CONFIG_NF_NAT_REDIRECT
+          CONFIG_IP_NF_IPTABLES
+          CONFIG_IP_NF_FILTER
+          CONFIG_IP_NF_TARGET_MASQUERADE
+          CONFIG_NETFILTER_XT_TARGET_MASQUERADE
+          CONFIG_NETFILTER_XT_TARGET_TCPMSS
+          CONFIG_NETFILTER_XT_TARGET_CHECKSUM
+          CONFIG_NETFILTER_XT_MARK
+          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+          CONFIG_NETFILTER_XT_MATCH_CONNTRACK
+          CONFIG_NF_TABLES
+          CONFIG_NF_TABLES_IPV4
+          CONFIG_NF_TABLES_IPV6
+          CONFIG_IP6_NF_IPTABLES
+          CONFIG_IP6_NF_FILTER
+          CONFIG_IP6_NF_TARGET_MASQUERADE
+          CONFIG_IP_ADVANCED_ROUTER
+          CONFIG_IP_MULTIPLE_TABLES
+          CONFIG_IPV6
+          CONFIG_INET
+          CONFIG_NET_SCHED
+          CONFIG_NET_CLS_CGROUP
+          CONFIG_NET_CLS_BPF
+          CONFIG_BPF_SYSCALL
+          CONFIG_CGROUP_BPF
+          CONFIG_PACKET
+          CONFIG_UNIX
+          CONFIG_PACKET_DIAG
+          CONFIG_UNIX_DIAG
+          CONFIG_NETLINK_DIAG
+          KWLIST
+
+          # 写前清掉同名旧行，避免一个键出现两次；追加到末尾保证最后生效
+          while read -r k; do
+            [ -z "$k" ] && continue
+            case "$k" in \#*) continue ;; esac
+            sed -i '\|^# '"$k"' is not set$|d' "$CFG"
+            sed -i '\|^'"$k"'=|d' "$CFG"
+            echo "$k=y" >> "$CFG"
+          done < /tmp/kwanted.txt
+
+          # 显式关闭项（容器必需关 / 防调度回归）
+          for k in CONFIG_ANDROID_PARANOID_NETWORK CONFIG_SCHED_AUTOGROUP CONFIG_RT_GROUP_SCHED; do
+            sed -i '\|^# '"$k"' is not set$|d' "$CFG"
+            sed -i '\|^'"$k"'=|d' "$CFG"
+            echo "# $k is not set" >> "$CFG"
+          done
+
+          echo "===== 注入清单项数 ====="
+          grep -c '^CONFIG_' /tmp/kwanted.txt
+          echo "===== defconfig 改动（相对注入前）====="
+          diff "${CFG}.pre-kw" "$CFG" | head -220 || true
+          echo "===== 畸形行残留检查（应为空）====="
+          grep -n '^CONFIG_!' "$CFG" || echo "无畸形行"
+
+      - name: 注入 Droidspaces Non-GKI 补丁
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace
-          wget -q https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
-          patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
-          cd android-kernel
-          curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch | patch -p1 || echo "[WARN] 补丁 01 应用失败"
-          curl -LSs "https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch" | patch -p1 || echo "[WARN] 补丁 02 应用失败"
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          B=https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI
+          apply_one() {
+            local url="$1" name="$2"
+            if ! curl -fsSL "$url" -o "/tmp/$name"; then
+              echo "[FAIL] 下载失败: $name"; return 1
+            fi
+            if patch -p1 --dry-run < "/tmp/$name" > /dev/null 2>&1; then
+              patch -p1 < "/tmp/$name" && echo "[OK] $name 已应用"
+            elif patch -p1 -R --dry-run < "/tmp/$name" > /dev/null 2>&1; then
+              echo "[SKIP] $name 已处于已应用状态"
+            else
+              echo "[FAIL] $name 不适用（上下文不匹配）"; return 1
+            fi
+          }
+          # non-GKI 目录下仅有这两个补丁，第三方仓的 xt_qtaguid.patch 与 01 同文件同目的，不再重复应用
+          apply_one "$B/01.fix_kernel_panic_in_xt_qtaguid.patch" 01_xt_qtaguid.patch
+          apply_one "$B/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch" 02_cgroup_prefix.patch
+          echo "===== xt_qtaguid.c 改动确认 ====="
+          git diff --stat net/netfilter/xt_qtaguid.c || true
+          grep -n 'rtnl_link_stats64 \*stats' net/netfilter/xt_qtaguid.c | head -3 || true
 
       - name: 修复 dtb/dtbo 构建（5.4 条件宏失配）
         if: env.NEED_DTBO == 'true'
@@ -222,6 +288,8 @@ jobs:
           fi
           echo "########## 编译错误汇总（去重） ##########"
           grep -E "error:|fatal error:" build_full.log | sort -u | head -60 || true
+          echo "########## 未知符号告警（注入清单是否命中 5.4 符号表） ##########"
+          grep -iE "unknown symbol|unmet direct|warning: .*was not set" build_full.log | sort -u | head -30 || true
           echo "########## 镜像产物检查 ##########"
           ls -l out/arch/arm64/boot/ 2>/dev/null || true
           if [ ! -f out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} ]; then
@@ -230,6 +298,40 @@ jobs:
             exit 1
           fi
 
+      - name: 容器配置自检（硬断言）
+        if: env.ENABLE_LXC_DOCKER == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          if [ ! -f out/.config ]; then echo "### out/.config 不存在，无法自检"; exit 1; fi
+          FAIL=0
+          echo "===== 必需项（缺失即失败）====="
+          for k in CONFIG_NAMESPACES CONFIG_PID_NS CONFIG_NET_NS CONFIG_UTS_NS CONFIG_IPC_NS CONFIG_CGROUPS \
+                   CONFIG_CGROUP_DEVICE CONFIG_CGROUP_PIDS CONFIG_CGROUP_FREEZER CONFIG_CGROUP_SCHED \
+                   CONFIG_MEMCG CONFIG_BLK_CGROUP CONFIG_OVERLAY_FS CONFIG_VETH CONFIG_BRIDGE CONFIG_BRIDGE_NETFILTER \
+                   CONFIG_NETFILTER CONFIG_NF_CONNTRACK CONFIG_NF_NAT CONFIG_IP_NF_IPTABLES CONFIG_IP_NF_FILTER \
+                   CONFIG_IP_NF_TARGET_MASQUERADE CONFIG_POSIX_MQUEUE CONFIG_SYSVIPC CONFIG_DEVTMPFS CONFIG_UNIX \
+                   CONFIG_PACKET CONFIG_TMPFS CONFIG_SECCOMP CONFIG_FAIR_GROUP_SCHED CONFIG_NET_SCHED \
+                   CONFIG_NET_CLS_CGROUP CONFIG_CGROUP_NET_PRIO CONFIG_CGROUP_CPUACCT CONFIG_KEYS CONFIG_FHANDLE \
+                   CONFIG_CGROUP_BPF CONFIG_BPF_SYSCALL; do
+            if grep -qE "^${k}=y$" out/.config; then
+              echo "  [OK ] $k"
+            else
+              echo "  [MISS] $k"; FAIL=$((FAIL+1))
+            fi
+          done
+          echo "===== 观察项（不判定失败）====="
+          for k in CONFIG_USER_NS CONFIG_MULTIUSER CONFIG_MACVLAN CONFIG_IPVLAN CONFIG_VXLAN CONFIG_VLAN_8021Q \
+                   CONFIG_NF_NAT_MASQUERADE CONFIG_IP6_NF_TARGET_MASQUERADE CONFIG_NF_TABLES CONFIG_CFS_BANDWIDTH \
+                   CONFIG_CGROUP_HUGETLB CONFIG_PACKET_DIAG CONFIG_UNIX_DIAG CONFIG_NETLINK_DIAG; do
+            printf "  %-34s %s\n" "$k" "$(grep -E "^${k}=y$" out/.config || echo '未启用')"
+          done
+          echo "===== 基线保护（应为关闭，防止调度/网络回归）====="
+          for k in CONFIG_ANDROID_PARANOID_NETWORK CONFIG_SCHED_AUTOGROUP CONFIG_RT_GROUP_SCHED; do
+            if grep -qE "^${k}=y$" out/.config; then echo "  [UNEXPECTED-ON] $k"; FAIL=$((FAIL+1)); else echo "  [OK-off] $k"; fi
+          done
+          if [ "$FAIL" -ne 0 ]; then echo "### 容器配置自检失败：$FAIL 项异常"; exit 1; fi
+          echo "### 容器配置自检通过"
+
       - name: 编译结果核查
         if: always()
         run: |
@@ -237,15 +339,17 @@ jobs:
           ls -l out/arch/arm64/boot/ 2>/dev/null || true
           if [ -f out/.config ]; then
             echo "===== 关键配置 ====="
-            for k in CONFIG_CC_IS_CLANG CONFIG_CFI_CLANG CONFIG_LTO_CLANG CONFIG_LTO_CLANG_THIN CONFIG_MODULES CONFIG_MODVERSIONS CONFIG_KSU CONFIG_BUILD_ARM64_DT_OVERLAY CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_OVERLAY_FS CONFIG_CGROUPS; do
+            for k in CONFIG_CC_IS_CLANG CONFIG_CFI_CLANG CONFIG_LTO_CLANG CONFIG_LTO_CLANG_THIN CONFIG_MODULES CONFIG_MODVERSIONS CONFIG_KSU CONFIG_BUILD_ARM64_DT_OVERLAY CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_OVERLAY_FS CONFIG_CGROUPS CONFIG_PID_NS CONFIG_SCHED_WALT CONFIG_SCHED_AUTOGROUP; do
               printf "%-38s %s\n" "$k" "$(grep -E "^${k}=" out/.config || echo '未启用/未设置')"
             done
           fi
+          cp -f out/.config out/config.used 2>/dev/null || true
+          cp -f arch/arm64/configs/${{ env.KERNEL_CONFIG }} out/defconfig.used 2>/dev/null || true
 
       - name: 构建 dtb 与 dtbo.img
         if: env.NEED_DTBO == 'true'
-        continue-on-error: true
         run: |
+          set -e
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
           if [ "${LLVM_CONFIG}" = "y" ]; then
@@ -256,32 +360,57 @@ jobs:
           Q=out/arch/arm64/boot/dts/qcom
           echo "----- 产物 -----"
           ls -l $Q/*.dtb $Q/*.dtbo $Q/dtbo.img 2>/dev/null || true
-          if [ ! -f $Q/dtbo.img ] && [ -f $Q/sm8150-v2.dtb ] && [ -f $Q/raphael-sm8150-overlay.dtbo ]; then
-            echo ">>> 内核未自动生成 dtbo.img，手工合并"
-            python3 scripts/mkdtboimg.py create $Q/dtbo.img --page_size=4096 $Q/sm8150-v2.dtb $Q/raphael-sm8150-overlay.dtbo
+          # 硬断言：boot 内 dtb 段来源与 dtbo 必须齐备，否则不允许出包
+          if [ ! -f $Q/sm8150-v2.dtb ]; then
+            echo "### 缺少 sm8150-v2.dtb（boot 内 dtb 段来源），构建失败"; exit 1
           fi
+          if [ ! -f $Q/raphael-sm8150-overlay.dtbo ]; then
+            echo "### 缺少 raphael-sm8150-overlay.dtbo，构建失败"; exit 1
+          fi
+          # 兜底：仅当内核未自动生成 dtbo.img 时手工生成（只放 overlay，base dtb 不进 dtbo.img）
+          if [ ! -f $Q/dtbo.img ]; then
+            echo ">>> 内核未自动生成 dtbo.img，手工生成（仅含 overlay）"
+            python3 scripts/mkdtboimg.py create $Q/dtbo.img --page_size=4096 $Q/raphael-sm8150-overlay.dtbo
+          fi
+          ls -l $Q/dtbo.img
 
-      - name: 打包 AnyKernel3
+      - name: 打包 AnyKernel3（内核 + base dtb + dtbo 同源三件套）
         run: |
+          set -e
           cd $GITHUB_WORKSPACE/kernel_workspace
           git clone -q https://github.com/osm0sis/AnyKernel3
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
           sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
           sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
-          cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
           rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+          Q=android-kernel/out/arch/arm64/boot/dts/qcom
+          cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
+          if [ "${NEED_DTBO}" = "true" ]; then
+            cp $Q/sm8150-v2.dtb AnyKernel3/dtb
+            cp $Q/dtbo.img AnyKernel3/dtbo.img
+          fi
+          echo "===== 卡刷包内容 ====="
           ls -l AnyKernel3/
+          echo "===== 同源三件套校验 ====="
+          sha256sum AnyKernel3/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/dtb AnyKernel3/dtbo.img 2>/dev/null | tee AnyKernel3/SHA256SUMS.txt || true
+          if [ "${NEED_DTBO}" = "true" ]; then
+            [ -s AnyKernel3/dtb ] || { echo "### dtb 缺失，禁止出包"; exit 1; }
+            [ -s AnyKernel3/dtbo.img ] || { echo "### dtbo.img 缺失，禁止出包"; exit 1; }
+            echo "### 三件套齐备：${{ env.KERNEL_IMAGE_NAME }} + dtb + dtbo.img"
+          fi
 
-      - name: 上传内核刷机包
+      - name: 上传内核刷机包（含 dtb/dtbo 同源三件套）
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}
+          name: ${{ env.KERNEL_ZIP_NAME }}-${{ env.ENABLE_LXC_DOCKER == 'true' && 'lxc' || 'base' }}
           path: kernel_workspace/AnyKernel3/*
 
-      - name: 上传 dtbo.img
-        if: env.NEED_DTBO == 'true'
+      - name: 上传配置与校验信息
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-dtbo
-          path: kernel_workspace/android-kernel/out/arch/arm64/boot/dts/qcom/dtbo.img
+          name: ${{ env.KERNEL_ZIP_NAME }}-config
+          path: |
+            kernel_workspace/android-kernel/out/config.used
+            kernel_workspace/android-kernel/out/defconfig.used
           if-no-files-found: warn

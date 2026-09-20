@@ -7,6 +7,13 @@ name: Zundamon-5.4 LXC/Docker [raphael]
 #  4) 打包：把 sm8150-v2.dtb（命名为 dtb）与 dtbo.img 一并放进 AnyKernel3，实现三件套同源一次卡刷
 #  5) 新增「容器配置自检」：对 out/.config 断言关键项已生效，并对调度类项断言保持关闭
 
+# v4 相对 v3 的 1 处关键修正（真机刷入实测闭环）：
+#  6) 打包：raphael 原厂 boot 为 header v0，dtb 是 append 在内核段尾部的；AnyKernel3 的 dtb 替换只认 v2 独立 dtb 段，
+#     v0 下 split_img 无 boot.img-dtb，替换被静默跳过 —— 实测 v3 包刷入后 boot 内仍是原厂 4.14 dtb（446802B），
+#     与包内 5.4 自编译 dtbo 不同源，ABL 合并 overlay 失败直接回落 fastboot。
+#     v4 改为：把 sm8150-v2.dtb 直接 append 进内核镜像文件（不再单列 dtb 文件），随 kernel 段一起写入 boot，
+#     并新增「内核段尾部 dtb 与自编译 dtb 逐字节一致」硬断言，不一致直接禁止出包。（该修复产物已真机验证可开机）
+
 on:
   workflow_dispatch:
     inputs:
@@ -374,7 +381,7 @@ jobs:
           fi
           ls -l $Q/dtbo.img
 
-      - name: 打包 AnyKernel3（内核 + base dtb + dtbo 同源三件套）
+      - name: 打包 AnyKernel3（v0 boot：dtb 追加进内核段，保证 boot/dtbo 同源）
         run: |
           set -e
           cd $GITHUB_WORKSPACE/kernel_workspace
@@ -384,19 +391,29 @@ jobs:
           sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
           rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
           Q=android-kernel/out/arch/arm64/boot/dts/qcom
-          cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
+          KIMG=${{ env.KERNEL_IMAGE_NAME }}
+          cp android-kernel/out/arch/arm64/boot/$KIMG AnyKernel3/
           if [ "${NEED_DTBO}" = "true" ]; then
-            cp $Q/sm8150-v2.dtb AnyKernel3/dtb
+            # raphael 原厂 boot 是 header v0：dtb append 在内核段尾部；AK3 的 dtb 替换只支持 v2 独立 dtb 段，
+            # v0 下 split_img 无 boot.img-dtb，替换会被静默跳过 → 必须把 dtb 直接拼进内核镜像随 kernel 段写入
+            cat $Q/sm8150-v2.dtb > AnyKernel3/.dtb.append
+            cat AnyKernel3/$KIMG AnyKernel3/.dtb.append > AnyKernel3/.kimg.tmp
+            mv -f AnyKernel3/.kimg.tmp AnyKernel3/$KIMG
+            rm -f AnyKernel3/.dtb.append AnyKernel3/dtb
             cp $Q/dtbo.img AnyKernel3/dtbo.img
           fi
           echo "===== 卡刷包内容 ====="
           ls -l AnyKernel3/
-          echo "===== 同源三件套校验 ====="
-          sha256sum AnyKernel3/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/dtb AnyKernel3/dtbo.img 2>/dev/null | tee AnyKernel3/SHA256SUMS.txt || true
+          echo "===== 校验（内核镜像 + 自编译 dtb + dtbo） ====="
+          sha256sum AnyKernel3/$KIMG $Q/sm8150-v2.dtb AnyKernel3/dtbo.img 2>/dev/null | tee AnyKernel3/SHA256SUMS.txt || true
           if [ "${NEED_DTBO}" = "true" ]; then
-            [ -s AnyKernel3/dtb ] || { echo "### dtb 缺失，禁止出包"; exit 1; }
             [ -s AnyKernel3/dtbo.img ] || { echo "### dtbo.img 缺失，禁止出包"; exit 1; }
-            echo "### 三件套齐备：${{ env.KERNEL_IMAGE_NAME }} + dtb + dtbo.img"
+            DTBSZ=$(stat -c%s $Q/sm8150-v2.dtb)
+            A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
+            B=$(sha256sum $Q/sm8150-v2.dtb | cut -d' ' -f1)
+            [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与自编译 dtb 不一致，禁止出包"; exit 1; }
+            echo "### 内核段尾部 dtb 一致性校验通过（$DTBSZ B, $A）"
+            echo "### 出包齐备：内核镜像(含 appended dtb，与 dtbo 同源) + dtbo.img"
           fi
 
       - name: 上传内核刷机包（含 dtb/dtbo 同源三件套）

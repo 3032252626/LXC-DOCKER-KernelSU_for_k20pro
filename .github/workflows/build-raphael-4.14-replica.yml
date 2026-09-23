@@ -52,6 +52,14 @@ on:
         options:
           - 'true'
           - 'false'
+      revert_plan_c:
+        description: '回退方案C (cpufreq-hw backport)：true=恢复上游 8fc5acac 基线'
+        required: true
+        type: choice
+        default: 'false'
+        options:
+          - 'false'
+          - 'true'
 
 concurrency:
   group: raphael-4.14-replica-${{ github.ref }}
@@ -100,6 +108,20 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
+
+      - name: "[4.5/11] 回退方案C（恢复上游 8fc5acac 基线）"
+        if: github.event.inputs.revert_plan_c == 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          git fetch -q --depth=100 origin ${{ env.KERNEL_SOURCE_BRANCH }}
+          git cat-file -t 8fc5acac >/dev/null 2>&1 || { echo "### 取不到上游基线 8fc5acac，停止"; exit 1; }
+          git checkout 8fc5acac -- arch/arm64/boot/dts/qcom/sm8150.dtsi arch/arm64/configs/raphael_defconfig drivers/cpufreq/Kconfig drivers/cpufreq/Makefile
+          rm -f drivers/cpufreq/qcom-cpufreq-hw.c
+          echo "=== 回退后 HEAD: $(git log --oneline -1) ==="
+          git diff --stat HEAD | tail -8
+          if grep -q 'ARM_QCOM_CPUFREQ_HW' arch/arm64/configs/raphael_defconfig; then echo "[WARN] defconfig 仍含 CPUFREQ_HW"; else echo "[OK ] defconfig 已无 CPUFREQ_HW"; fi
+          if grep -q 'cpufreq_hw' arch/arm64/boot/dts/qcom/sm8150.dtsi; then echo "[WARN] dtsi 仍含 cpufreq_hw"; else echo "[OK ] dtsi 已无 cpufreq_hw"; fi
+          ls -l drivers/cpufreq/qcom-cpufreq-hw.c 2>/dev/null && echo "[WARN] 驱动文件仍在" || echo "[OK ] 驱动文件已移除"
 
       - name: "[5/11] 注入 LXC/Docker 容器配置"
         if: env.ENABLE_LXC_DOCKER == 'true'
@@ -331,14 +353,14 @@ jobs:
       - name: 上传卡刷包工件
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-replica
+          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.revert_plan_c == 'true' && '-noplanC' || '' }}
           path: kernel_workspace/AnyKernel3/*
 
       - name: 上传配置与校验信息
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-replica-config
+          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.revert_plan_c == 'true' && '-noplanC' || '' }}-config
           path: |
             kernel_workspace/android-kernel/out/config.used
             kernel_workspace/android-kernel/out/defconfig.used

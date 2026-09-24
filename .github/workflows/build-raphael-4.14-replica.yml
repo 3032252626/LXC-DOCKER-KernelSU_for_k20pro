@@ -52,14 +52,15 @@ on:
         options:
           - 'true'
           - 'false'
-      revert_plan_c:
-        description: '回退方案C (cpufreq-hw backport)：true=恢复上游 8fc5acac 基线'
+      variant:
+        description: '构建变体: plan_c=含方案C / revert_plan_c=回退方案C(上游基线) / no_driver=保留dtsi仅关驱动'
         required: true
         type: choice
-        default: 'false'
+        default: 'plan_c'
         options:
-          - 'false'
-          - 'true'
+          - plan_c
+          - revert_plan_c
+          - no_driver
 
 concurrency:
   group: raphael-4.14-replica-${{ github.ref }}
@@ -110,7 +111,7 @@ jobs:
           git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
 
       - name: "[4.5/11] 回退方案C（恢复上游 8fc5acac 基线）"
-        if: github.event.inputs.revert_plan_c == 'true'
+        if: github.event.inputs.variant == 'revert_plan_c'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           git fetch -q --depth=100 origin ${{ env.KERNEL_SOURCE_BRANCH }}
@@ -122,6 +123,15 @@ jobs:
           if grep -q 'ARM_QCOM_CPUFREQ_HW' arch/arm64/configs/raphael_defconfig; then echo "[WARN] defconfig 仍含 CPUFREQ_HW"; else echo "[OK ] defconfig 已无 CPUFREQ_HW"; fi
           if grep -q 'cpufreq_hw' arch/arm64/boot/dts/qcom/sm8150.dtsi; then echo "[WARN] dtsi 仍含 cpufreq_hw"; else echo "[OK ] dtsi 已无 cpufreq_hw"; fi
           ls -l drivers/cpufreq/qcom-cpufreq-hw.c 2>/dev/null && echo "[WARN] 驱动文件仍在" || echo "[OK ] 驱动文件已移除"
+
+      - name: "[4.6/11] 变体 no_driver：保留方案C dtsi，仅关闭 cpufreq-hw 驱动"
+        if: github.event.inputs.variant == 'no_driver'
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          sed -i 's|^CONFIG_ARM_QCOM_CPUFREQ_HW=y|# CONFIG_ARM_QCOM_CPUFREQ_HW is not set|' arch/arm64/configs/raphael_defconfig
+          if grep -q 'ARM_QCOM_CPUFREQ_HW=y' arch/arm64/configs/raphael_defconfig; then echo "[WARN] 驱动开关仍为 y"; else echo "[OK ] 已关闭 CONFIG_ARM_QCOM_CPUFREQ_HW"; fi
+          printf "dtsi 中 cpufreq_hw 引用数: "; grep -c 'cpufreq_hw' arch/arm64/boot/dts/qcom/sm8150.dtsi || true
+          printf "dtsi 中 freq-domain 引用数: "; grep -c 'qcom,freq-domain' arch/arm64/boot/dts/qcom/sm8150.dtsi || true
 
       - name: "[5/11] 注入 LXC/Docker 容器配置"
         if: env.ENABLE_LXC_DOCKER == 'true'
@@ -353,14 +363,14 @@ jobs:
       - name: 上传卡刷包工件
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.revert_plan_c == 'true' && '-noplanC' || '' }}
+          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.variant == 'revert_plan_c' && '-noplanC' || (github.event.inputs.variant == 'no_driver' && '-nodrv' || '') }}
           path: kernel_workspace/AnyKernel3/*
 
       - name: 上传配置与校验信息
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.revert_plan_c == 'true' && '-noplanC' || '' }}-config
+          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.variant == 'revert_plan_c' && '-noplanC' || (github.event.inputs.variant == 'no_driver' && '-nodrv' || '') }}-config
           path: |
             kernel_workspace/android-kernel/out/config.used
             kernel_workspace/android-kernel/out/defconfig.used

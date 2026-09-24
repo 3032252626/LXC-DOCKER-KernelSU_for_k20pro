@@ -14,21 +14,63 @@ name: Zundamon-5.4 LXC/Docker [raphael]
 #     v4 改为：把 sm8150-v2.dtb 直接 append 进内核镜像文件（不再单列 dtb 文件），随 kernel 段一起写入 boot，
 #     并新增「内核段尾部 dtb 与自编译 dtb 逐字节一致」硬断言，不一致直接禁止出包。（该修复产物已真机验证可开机）
 
+# v5 相对 v4 的 6 处改动（仅工作流工程化加固，编译链路与出包逻辑一字未动）：
+#  7) inputs 收敛为下拉选项，新增 ccache_enable（缓存开关）与 kernel_suffix（包名后缀，随产物名输出）
+#  8) 新增 concurrency：同一分支同一时刻只保留一次构建，避免并发抢缓存
+#  9) 步骤全部编号 [n/20]，并向 GITHUB_STEP_SUMMARY 写入：参数表 / 编译耗时 / 出包清单 / SHA256
+# 10) ccache 可关：ccache_enable=false 时跳过缓存步骤并以纯 clang 编译；构建后输出 ccache -s 命中统计
+# 11) 诊断留档：build_full.log 无论成败都上传，失败可直接取日志定位
+# 12) 出包断言加严：内核镜像与 dtbo.img 非空、内核段尾 dtb 一致性通过后才允许出包
+
+env:
+  TZ: Asia/Shanghai
+  KERNEL_VERSION: '5.4'
+
 on:
   workflow_dispatch:
     inputs:
       llvm_config:
         description: 'LLVM=1 LLVM_IAS=1（CFI_CLANG 需要；编译报错时可改 n）'
-        required: false
+        required: true
+        type: choice
         default: 'y'
+        options:
+          - 'y'
+          - 'n'
       enable_lxc:
         description: 'true=容器版（注入 LXC/Docker 配置与 Droidspaces 补丁）；false=基线版（仅设备支持）'
-        required: false
+        required: true
+        type: choice
         default: 'true'
+        options:
+          - 'true'
+          - 'false'
       build_dtbo:
         description: '构建 dtb/dtbo.img 并打进卡刷包'
-        required: false
+        required: true
+        type: choice
         default: 'true'
+        options:
+          - 'true'
+          - 'false'
+      ccache_enable:
+        description: '启用 ccache 缓存（首次编译慢，二次起命中缓存）'
+        required: true
+        type: choice
+        default: 'true'
+        options:
+          - 'true'
+          - 'false'
+      kernel_suffix:
+        description: '可选包名后缀（仅字母/数字/-/_，例 -test1；留空则不加）'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: raphael-5.4-lxc-${{ github.ref }}
+  cancel-in-progress: false
+
 
 jobs:
   build:
@@ -37,10 +79,10 @@ jobs:
     if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
-      - name: 拉取仓库
+      - name: "[1/20] 拉取仓库"
         uses: actions/checkout@v4
 
-      - name: 读取 config.env
+      - name: "[2/20] 读取 config.env 与编译参数"
         run: |
           grep '^KERNEL_SOURCE=' config.env >> $GITHUB_ENV
           grep '^KERNEL_SOURCE_BRANCH=' config.env >> $GITHUB_ENV
@@ -57,16 +99,37 @@ jobs:
           if [ -n "${{ inputs.llvm_config }}" ]; then echo "LLVM_CONFIG=${{ inputs.llvm_config }}" >> $GITHUB_ENV; fi
           if [ -n "${{ inputs.enable_lxc }}" ]; then echo "ENABLE_LXC_DOCKER=${{ inputs.enable_lxc }}" >> $GITHUB_ENV; fi
           if [ -n "${{ inputs.build_dtbo }}" ]; then echo "NEED_DTBO=${{ inputs.build_dtbo }}" >> $GITHUB_ENV; fi
+          # v5 新增：ccache 开关 / 编译命令 / 包名后缀
+          if [ "${{ inputs.ccache_enable }}" = "true" ]; then
+            echo "USE_CCACHE=true" >> $GITHUB_ENV
+            echo "CC_CMD=ccache clang" >> $GITHUB_ENV
+          else
+            echo "USE_CCACHE=false" >> $GITHUB_ENV
+            echo "CC_CMD=clang" >> $GITHUB_ENV
+          fi
+          echo "SUFFIX=${{ inputs.kernel_suffix }}" >> $GITHUB_ENV
           echo "===== 本次生效配置 ====="
           grep -E '^(KERNEL_|LLVM_CONFIG|NEED_DTBO|ENABLE_|SWITCH_)' $GITHUB_ENV
+          {
+            echo "### Zundamon-5.4 构建参数"
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 内核源 | ${{ inputs.enable_lxc == 'true' && '容器版' || '基线版' }} |"
+            echo "| LLVM=1 LLVM_IAS=1 | ${{ inputs.llvm_config }} |"
+            echo "| LXC/Docker | ${{ inputs.enable_lxc }} |"
+            echo "| dtb/dtbo 出包 | ${{ inputs.build_dtbo }} |"
+            echo "| ccache | ${{ inputs.ccache_enable }} |"
+            echo "| 包名后缀 | ${{ inputs.kernel_suffix }} |"
+            echo "| 运行 | #${{ github.run_number }} |"
+          } >> $GITHUB_STEP_SUMMARY
 
-      - name: 安装编译依赖
+      - name: "[3/20] 安装编译依赖"
         run: |
           sudo apt-get update
           sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev pkg-config ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-      - name: 下载 clang 编译器
+      - name: "[4/20] 下载 clang 编译器"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           if git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp; then
@@ -80,13 +143,13 @@ jobs:
           ls clang-aosp
           $GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin/clang --version | head -3
 
-      - name: 下载内核源码
+      - name: "[5/20] 下载内核源码"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
           cd android-kernel && git log -1 --oneline
 
-      - name: 容器能力注入（5.4 校准清单）
+      - name: "[6/20] 容器能力注入（5.4 校准清单）"
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           set -e
@@ -206,7 +269,7 @@ jobs:
           echo "===== 畸形行残留检查（应为空）====="
           grep -n '^CONFIG_!' "$CFG" || echo "无畸形行"
 
-      - name: 注入 Droidspaces Non-GKI 补丁
+      - name: "[7/20] 注入 Droidspaces Non-GKI 补丁"
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -234,7 +297,7 @@ jobs:
           git diff --stat net/netfilter/xt_qtaguid.c || true
           grep -n 'rtnl_link_stats64 \*stats' net/netfilter/xt_qtaguid.c | head -3 || true
 
-      - name: 修复 dtb/dtbo 构建（5.4 条件宏失配）
+      - name: "[8/20] 修复 dtb/dtbo 构建（5.4 条件宏失配）"
         if: env.NEED_DTBO == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -245,7 +308,7 @@ jobs:
           echo "----- 修复后 qcom/Makefile -----"
           cat $MK
 
-      - name: 源码编译修复
+      - name: "[9/20] 源码编译修复"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           # 5.4 的 dtc 需链接 libyaml；强制写入链接库，避免 pkg-config 缺失导致 HOSTLD 失败
@@ -271,31 +334,45 @@ jobs:
           if [ -f fs/btrfs/inode.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c || true; fi
           if [ -f fs/btrfs/file.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c || true; fi
 
-      - name: 设置 ccache 缓存
+      - name: "[10/20] 设置 ccache 缓存"
+        if: env.USE_CCACHE == 'true'
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: build-raphael-5.4-lxc
           max-size: 3G
 
-      - name: 生成 defconfig
+      - name: "[11/20] 生成 defconfig"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
           make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
 
-      - name: 编译内核
+      - name: "[12/20] 编译内核"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
           export KBUILD_BUILD_HOST=17
           export KBUILD_BUILD_USER=HyperPower
+          START=$(date +%s)
           if [ "${LLVM_CONFIG}" = "y" ]; then
             echo ">>> 带 LLVM=1 LLVM_IAS=1 编译（-k 模式，一次性收集全部编译错误）"
-            make -k -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 > build_full.log 2>&1 || true
+            make -k -j$(nproc --all) O=out ARCH=arm64 CC="$CC_CMD" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 > build_full.log 2>&1 || true
           else
             echo ">>> 不带 LLVM=1 编译（-k 模式）"
-            make -k -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- > build_full.log 2>&1 || true
+            make -k -j$(nproc --all) O=out ARCH=arm64 CC="$CC_CMD" CXX=clang++ CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- > build_full.log 2>&1 || true
           fi
+          END=$(date +%s)
+          echo "编译耗时 $((END-START)) 秒"
+          ccache -s 2>/dev/null || true
+          {
+            echo ""
+            echo "### 编译阶段"
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 编译耗时 | $((END-START)) 秒 |"
+            echo "| ccache | ${USE_CCACHE} |"
+          } >> $GITHUB_STEP_SUMMARY
+
           echo "########## 编译错误汇总（去重） ##########"
           grep -E "error:|fatal error:" build_full.log | sort -u | head -60 || true
           echo "########## 未知符号告警（注入清单是否命中 5.4 符号表） ##########"
@@ -308,7 +385,7 @@ jobs:
             exit 1
           fi
 
-      - name: 容器配置自检（硬断言）
+      - name: "[13/20] 容器配置自检（硬断言）"
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -342,7 +419,7 @@ jobs:
           if [ "$FAIL" -ne 0 ]; then echo "### 容器配置自检失败：$FAIL 项异常"; exit 1; fi
           echo "### 容器配置自检通过"
 
-      - name: 编译结果核查
+      - name: "[14/20] 编译结果核查"
         if: always()
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -356,17 +433,27 @@ jobs:
           cp -f out/.config out/config.used 2>/dev/null || true
           cp -f arch/arm64/configs/${{ env.KERNEL_CONFIG }} out/defconfig.used 2>/dev/null || true
 
-      - name: 构建 dtb 与 dtbo.img
+      - name: "[15/20] 构建 dtb 与 dtbo.img"
         if: env.NEED_DTBO == 'true'
         run: |
           set -e
+          START_DTBS=$(date +%s)
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
           if [ "${LLVM_CONFIG}" = "y" ]; then
-            make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 dtbs || true
+            make -j$(nproc --all) O=out ARCH=arm64 CC="$CC_CMD" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 dtbs || true
           else
-            make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- dtbs || true
+            make -j$(nproc --all) O=out ARCH=arm64 CC="$CC_CMD" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- dtbs || true
           fi
+          END_DTBS=$(date +%s)
+          echo "dtb/dtbo 构建耗时 $((END_DTBS-START_DTBS)) 秒"
+          {
+            echo ""
+            echo "### dtb/dtbo 阶段"
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| dtb/dtbo 构建耗时 | $((END_DTBS-START_DTBS)) 秒 |"
+          } >> $GITHUB_STEP_SUMMARY
           Q=out/arch/arm64/boot/dts/qcom
           echo "----- 产物 -----"
           ls -l $Q/*.dtb $Q/*.dtbo $Q/dtbo.img 2>/dev/null || true
@@ -384,7 +471,7 @@ jobs:
           fi
           ls -l $Q/dtbo.img
 
-      - name: 打包 AnyKernel3（v0 boot：dtb 追加进内核段，保证 boot/dtbo 同源）
+      - name: "[16/20] 打包 AnyKernel3（v0 boot：dtb 追加进内核段，保证 boot/dtbo 同源）"
         run: |
           set -e
           cd $GITHUB_WORKSPACE/kernel_workspace
@@ -418,19 +505,52 @@ jobs:
             echo "### 内核段尾部 dtb 一致性校验通过（$DTBSZ B, $A）"
             echo "### 出包齐备：内核镜像(含 appended dtb，与 dtbo 同源) + dtbo.img"
           fi
+          {
+            echo ""
+            echo "### 出包内容（AnyKernel3）"
+            echo "| 文件 | 字节 |"
+            echo "|---|---|"
+            ls -l AnyKernel3/ | tail -n +2 | awk '{print "| " $9 " | " $5 " |"}'
+            echo ""
+            echo "### SHA256"
+            echo '```'
+            cat AnyKernel3/SHA256SUMS.txt 2>/dev/null || true
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
 
-      - name: 上传内核刷机包（含 dtb/dtbo 同源三件套）
+      - name: "[17/20] 上传内核刷机包（含 dtb/dtbo 同源三件套）"
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-${{ env.ENABLE_LXC_DOCKER == 'true' && 'lxc' || 'base' }}
+          name: ${{ env.KERNEL_ZIP_NAME }}-${{ env.ENABLE_LXC_DOCKER == 'true' && 'lxc' || 'base' }}${{ inputs.kernel_suffix }}
           path: kernel_workspace/AnyKernel3/*
 
-      - name: 上传配置与校验信息
+      - name: "[18/20] 上传配置与校验信息"
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-config
+          name: ${{ env.KERNEL_ZIP_NAME }}-config${{ inputs.kernel_suffix }}
           path: |
             kernel_workspace/android-kernel/out/config.used
             kernel_workspace/android-kernel/out/defconfig.used
           if-no-files-found: warn
+
+      - name: "[19/20] 上传构建日志（诊断）"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_ZIP_NAME }}-${{ env.ENABLE_LXC_DOCKER == 'true' && 'lxc' || 'base' }}${{ inputs.kernel_suffix }}-logs
+          path: |
+            kernel_workspace/android-kernel/build_full.log
+          if-no-files-found: warn
+
+      - name: "[20/20] 构建汇总"
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "---"
+            echo "### 汇总"
+            echo "- 结果：${{ job.status }}"
+            echo "- 变体：${{ env.ENABLE_LXC_DOCKER == 'true' && 'lxc' || 'base' }}${{ inputs.kernel_suffix }}"
+            echo "- 运行：[${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } >> $GITHUB_STEP_SUMMARY

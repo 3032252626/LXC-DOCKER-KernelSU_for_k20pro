@@ -267,13 +267,31 @@ jobs:
           fi
           START=$(date +%s)
           make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+          LOG=build_full.log
+          set +e
           if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
-            make -j$(nproc --all) CC="$CC_WRAP" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1 2>&1 | tail -n 30
+            make -j$(nproc --all) CC="$CC_WRAP" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1 > $LOG 2>&1
           else
-            make -j$(nproc --all) CC="$CC_WRAP" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" 2>&1 | tail -n 30
+            make -j$(nproc --all) CC="$CC_WRAP" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" > $LOG 2>&1
           fi
+          RC=$?
+          set -e
           END=$(date +%s)
-          echo "编译耗时: $((END-START)) 秒"
+          echo "编译退出码: $RC | 编译耗时: $((END-START)) 秒"
+          echo "########## 编译错误汇总（去重） ##########"
+          grep -nE "error:|fatal error:|Error [0-9]+|\*\*\* " $LOG | sort -u | head -60 || true
+          if [ "$RC" -ne 0 ]; then
+            echo "########## make 失败，日志尾部 150 行 ##########"
+            tail -n 150 $LOG
+            cp -f $LOG out/build_failed.log 2>/dev/null || true
+            exit 1
+          fi
+          if [ ! -f out/arch/arm64/boot/Image.gz ]; then
+            echo "########## 未生成 Image.gz，日志尾部 150 行 ##########"
+            tail -n 150 $LOG
+            cp -f $LOG out/build_failed.log 2>/dev/null || true
+            exit 1
+          fi
           echo "| 编译耗时 | $((END-START)) 秒 |" >> $GITHUB_STEP_SUMMARY
           if [ "${{ env.USE_CCACHE }}" = "true" ]; then
             ccache -s || true

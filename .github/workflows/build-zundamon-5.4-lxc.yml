@@ -357,7 +357,7 @@ jobs:
             if [ -f "$cand" ]; then PM="$cand"; break; fi
           done
           if [ -n "$PM" ] && grep -q 'probe_kernel_write' "$PM"; then
-            if grep -qE 'probe_kernel_write[[:space:]]*\(' mm/maccess.c 2>/dev/null; then
+            if grep -qE '(EXPORT_SYMBOL(_GPL)?[(]probe_kernel_write[)]|^[A-Za-z_].*probe_kernel_write[[:space:]]*[(])' mm/maccess.c 2>/dev/null; then
               echo "[KSU] 内核提供 probe_kernel_write，保留 legacy 映射"
             else
               sed -i '/^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$/,/^#endif$/c\/* 本内核已 backport 5.8 nofault API：直接使用 copy_to_kernel_nofault */' "$PM"

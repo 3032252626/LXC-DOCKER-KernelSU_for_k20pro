@@ -44,6 +44,14 @@ on:
         options:
           - 'true'
           - 'false'
+      os4_adapt:
+        description: 'OS4 适配打包 (true=仅 kernel+ROM原dtb，不打包/不刷 dtbo)'
+        required: true
+        type: choice
+        default: 'false'
+        options:
+          - 'false'
+          - 'true'
       ccache_enable:
         description: '启用 ccache 缓存 (首次编译较慢，二次开始命中缓存)'
         required: true
@@ -82,6 +90,7 @@ jobs:
           echo "ENABLE_KERNELSU=${{ github.event.inputs.enable_ksu }}" >> $GITHUB_ENV
           echo "NEED_DTBO=${{ github.event.inputs.build_dtbo }}" >> $GITHUB_ENV
           echo "USE_CCACHE=${{ github.event.inputs.ccache_enable }}" >> $GITHUB_ENV
+          echo "OS4_ADAPT=${{ github.event.inputs.os4_adapt }}" >> $GITHUB_ENV
           echo "### 编译参数 (4.14 复刻版)" >> $GITHUB_STEP_SUMMARY
           echo "| 项 | 值 |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
@@ -92,6 +101,7 @@ jobs:
           echo "| LXC/Docker | ${{ github.event.inputs.enable_lxc }} |" >> $GITHUB_STEP_SUMMARY
           echo "| KernelSU | ${{ github.event.inputs.enable_ksu }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dtbo | ${{ github.event.inputs.build_dtbo }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| OS4适配打包 | ${{ github.event.inputs.os4_adapt }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: "[2/11] 安装构建依赖"
         run: |
@@ -375,7 +385,8 @@ jobs:
           if [ "$FAIL" -ne 0 ]; then echo "### 开机基线自检失败：$FAIL 项异常，禁止出包"; exit 1; fi
           echo "### 开机基线自检通过"
 
-      - name: "[11/11] 构建 dtb/dtbo.img (sm8150-v2 为 base)"
+      - name: "[11/11] 构建 dtb/dtbo.img (sm8150-v2 为 base；OS4 适配模式自动跳过)"
+        if: github.event.inputs.os4_adapt != 'true'
         run: |
           set -e
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -395,7 +406,7 @@ jobs:
           fi
           ls -l $Q/dtbo.img
 
-      - name: 打包 AnyKernel3 (锁定 sm8150-v2 appended dtb + dtbo 同源)
+      - name: 打包 AnyKernel3 (OS4 适配=仅 kernel+ROM原dtb；默认=sm8150-v2 dtb+dtbo)
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           git clone https://github.com/osm0sis/AnyKernel3
@@ -404,44 +415,70 @@ jobs:
           sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
           Q=android-kernel/out/arch/arm64/boot/dts/qcom
           KIMG=${KERNEL_IMAGE_NAME:-Image.gz-dtb}
-          BASE=$Q/sm8150-v2.dtb
-          [ -f "$BASE" ] || { echo "### 缺少 sm8150-v2.dtb，禁止出包"; exit 1; }
-          if [ -f android-kernel/out/arch/arm64/boot/Image.gz ]; then
-            SRC=android-kernel/out/arch/arm64/boot/Image.gz
-          else
-            SRC=android-kernel/out/arch/arm64/boot/$KIMG
-          fi
-          cp "$SRC" AnyKernel3/$KIMG
-          DTBSZ=$(stat -c%s "$BASE")
-          if [ "$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)" != "$(sha256sum $BASE | cut -d' ' -f1)" ]; then
-            echo ">>> 内核镜像尾部 dtb 与 sm8150-v2.dtb 不一致，执行拼装对齐"
-            cat AnyKernel3/$KIMG "$BASE" > AnyKernel3/.kimg.tmp
-            mv -f AnyKernel3/.kimg.tmp AnyKernel3/$KIMG
-          fi
           rm -f AnyKernel3/dtb
-          if [ "${NEED_DTBO:-false}" = "true" ]; then
-            [ -s $Q/dtbo.img ] || { echo "### dtbo.img 缺失，禁止出包"; exit 1; }
-            cp $Q/dtbo.img AnyKernel3/dtbo.img
+          if [ "${OS4_ADAPT:-false}" = "true" ]; then
+            echo "########## OS4 适配打包：kernel + ROM 原 dtb，不打包/不刷 dtbo ##########"
+            ROM_DIR=$GITHUB_WORKSPACE/os4
+            ROM_DTB=$ROM_DIR/raphael_kameyuki_os4_rom.dtb
+            [ -s "$ROM_DTB" ] || { echo "### 缺少 ROM 原 dtb ($ROM_DTB)，禁止出包"; exit 1; }
+            [ -s "$ROM_DIR/anykernel-os4.sh" ] || { echo "### 缺少 anykernel-os4.sh，禁止出包"; exit 1; }
+            KSRC=android-kernel/out/arch/arm64/boot/Image.gz
+            [ -s "$KSRC" ] || { echo "### 缺少 Image.gz，禁止出包"; exit 1; }
+            cp "$KSRC" AnyKernel3/Image.gz
+            cat AnyKernel3/Image.gz "$ROM_DTB" > AnyKernel3/$KIMG
+            rm -f AnyKernel3/Image.gz
+            DTBSZ=$(stat -c%s "$ROM_DTB")
+            A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
+            B=$(sha256sum "$ROM_DTB" | cut -d' ' -f1)
+            [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与 ROM 原 dtb 不一致，禁止出包"; exit 1; }
+            cp -f "$ROM_DIR/anykernel-os4.sh" AnyKernel3/anykernel.sh
+            sed -i 's|^\([[:space:]]*\)flash_generic dtbo;|\1# flash_generic dtbo; # OS4 adapt: dtbo 分区保持 ROM 原样|' AnyKernel3/tools/ak3-core.sh
+            grep -qE '^[[:space:]]*# flash_generic dtbo;' AnyKernel3/tools/ak3-core.sh || { echo "### ak3-core.sh 中 flash_generic dtbo 未成功注释，禁止出包"; exit 1; }
+            grep -q '^flash_boot;' AnyKernel3/anykernel.sh || { echo "### anykernel.sh 未切换到 flash_boot，禁止出包"; exit 1; }
+            if [ -f AnyKernel3/dtbo.img ]; then echo "### OS4 模式禁止打包 dtbo.img"; exit 1; fi
+            ls -l AnyKernel3/
+            sha256sum AnyKernel3/$KIMG "$ROM_DTB" | tee AnyKernel3/SHA256SUMS.txt
+            echo "### OS4 适配打包校验通过：kernel + ROM dtb ($DTBSZ B, $A)，未打包 dtbo"
+          else
+            BASE=$Q/sm8150-v2.dtb
+            [ -f "$BASE" ] || { echo "### 缺少 sm8150-v2.dtb，禁止出包"; exit 1; }
+            if [ -f android-kernel/out/arch/arm64/boot/Image.gz ]; then
+              SRC=android-kernel/out/arch/arm64/boot/Image.gz
+            else
+              SRC=android-kernel/out/arch/arm64/boot/$KIMG
+            fi
+            cp "$SRC" AnyKernel3/$KIMG
+            DTBSZ=$(stat -c%s "$BASE")
+            if [ "$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)" != "$(sha256sum $BASE | cut -d' ' -f1)" ]; then
+              echo ">>> 内核镜像尾部 dtb 与 sm8150-v2.dtb 不一致，执行拼装对齐"
+              cat AnyKernel3/$KIMG "$BASE" > AnyKernel3/.kimg.tmp
+              mv -f AnyKernel3/.kimg.tmp AnyKernel3/$KIMG
+            fi
+            rm -f AnyKernel3/dtb
+            if [ "${NEED_DTBO:-false}" = "true" ]; then
+              [ -s $Q/dtbo.img ] || { echo "### dtbo.img 缺失，禁止出包"; exit 1; }
+              cp $Q/dtbo.img AnyKernel3/dtbo.img
+            fi
+            A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
+            B=$(sha256sum $BASE | cut -d' ' -f1)
+            [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与自编译 dtb 不一致，禁止出包"; exit 1; }
+            ls -l AnyKernel3/
+            sha256sum AnyKernel3/$KIMG $BASE $Q/dtbo.img 2>/dev/null | tee AnyKernel3/SHA256SUMS.txt || true
+            echo "### 内核段尾部 dtb 一致性校验通过 ($DTBSZ B, $A)"
           fi
-          A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
-          B=$(sha256sum $BASE | cut -d' ' -f1)
-          [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与自编译 dtb 不一致，禁止出包"; exit 1; }
-          ls -l AnyKernel3/
-          sha256sum AnyKernel3/$KIMG $BASE $Q/dtbo.img 2>/dev/null | tee AnyKernel3/SHA256SUMS.txt || true
           rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
-          echo "### 内核段尾部 dtb 一致性校验通过 ($DTBSZ B, $A)"
 
       - name: 上传卡刷包工件
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.variant == 'revert_plan_c' && '-noplanC' || (github.event.inputs.variant == 'no_driver' && '-nodrv' || '') }}
+          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.os4_adapt == 'true' && '-OS4' || '' }}${{ github.event.inputs.variant == 'revert_plan_c' && '-noplanC' || (github.event.inputs.variant == 'no_driver' && '-nodrv' || '') }}
           path: kernel_workspace/AnyKernel3/*
 
       - name: 上传配置与校验信息
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.variant == 'revert_plan_c' && '-noplanC' || (github.event.inputs.variant == 'no_driver' && '-nodrv' || '') }}-config
+          name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.os4_adapt == 'true' && '-OS4' || '' }}${{ github.event.inputs.variant == 'revert_plan_c' && '-noplanC' || (github.event.inputs.variant == 'no_driver' && '-nodrv' || '') }}-config
           path: |
             kernel_workspace/android-kernel/out/config.used
             kernel_workspace/android-kernel/out/defconfig.used

@@ -254,6 +254,32 @@ jobs:
           key: ${{ env.CCACHE_KEY }}
           max-size: 2G
 
+      - name: "[9.5/11] 集成 KSU-Next legacy manual hook 入口 (4.14 reboot)"
+        run: |
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          if grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
+            echo "[OK] kernel/reboot.c 已存在 ksu_handle_sys_reboot"
+          else
+            cat > /tmp/ksu_reboot_hook.txt <<'EOF'
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+          	extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
+          	if (ksu_handle_sys_reboot(magic1, magic2, cmd, &arg))
+          		return 0;
+          #endif
+          EOF
+            S=$(awk '/^SYSCALL_DEFINE4[(]reboot,/{print NR; exit}' kernel/reboot.c)
+            M=$(awk -v s="$S" 'NR>s && /^[{]/{print NR; exit}' kernel/reboot.c)
+            echo "[i] SYSCALL_DEFINE4(reboot) 函数体起始行: $M"
+            if [ -z "$M" ]; then echo "### 未定位 reboot 函数体，manual hook 无法集成"; exit 1; fi
+            N=$(awk -v s="$M" 'NR>s && /^[[:space:]]*$/{print NR; exit}' kernel/reboot.c)
+            N=${N:-$((M+1))}
+            echo "[i] 插入锚点(首个空行)行号: $N"
+            sed -i "$((N-1))r /tmp/ksu_reboot_hook.txt" kernel/reboot.c
+            echo "[OK] 已插入 ksu_handle_sys_reboot 调用点"
+          fi
+          grep -q "ksu_handle_sys_reboot" kernel/reboot.c || { echo "### manual hook 集成校验失败"; exit 1; }
+          sed -n '/SYSCALL_DEFINE4(reboot,/,/^}/p' kernel/reboot.c | head -22
+
       - name: "[10/11] 编译内核"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel

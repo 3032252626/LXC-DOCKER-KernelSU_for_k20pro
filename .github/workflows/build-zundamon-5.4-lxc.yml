@@ -26,6 +26,7 @@ name: Zundamon-5.4 LXC/Docker [raphael]
 # 13) 移除内核树内置的旧 KSU 实现（unity build 世代 / KSU_VERSION=32525），改由工作流注入 KernelSU-Next legacy v3.4.0-legacy
 # 14) 5.4 非GKI 走 syscall table hook（内核 >=4.17 满足；官方 KPROBES hook 标注不适用于 <5.10）
 # 15) 同步清理旧 defconfig 开关 CONFIG_KSU_HACK_ARM64_BRANCH_LINK / CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED
+# 16) 修复 KSU-Next legacy 在已 backport nofault API 的 5.4 上引用 probe_kernel_write 导致 vmlinux 链接失败
 
 env:
   TZ: Asia/Shanghai
@@ -348,6 +349,22 @@ jobs:
           sed -i 's/idx = css->cgroup->id;/idx = css->id;/' include/net/netprio_cgroup.h
           if grep -q 'css->cgroup->id' include/net/netprio_cgroup.h; then echo "[ERROR] netprio 修复未生效"; exit 1; fi
           grep -n 'idx = css->id;' include/net/netprio_cgroup.h || true
+          # KSU-Next legacy patch_memory.c：<5.8 内核会把 copy_to_kernel_nofault 映射成 probe_kernel_write，
+          # 但本内核(5.4)已 backport 5.8 的 nofault API（mm/maccess.c 只有 copy_to_kernel_nofault），
+          # 若保留映射，vmlinux 链接会报 undefined symbol: probe_kernel_write
+          PM=""
+          for cand in drivers/kernelsu/hook/patch_memory.c KernelSU-Next/kernel/hook/patch_memory.c; do
+            if [ -f "$cand" ]; then PM="$cand"; break; fi
+          done
+          if [ -n "$PM" ] && grep -q 'probe_kernel_write' "$PM"; then
+            if grep -rqs 'probe_kernel_write' mm/maccess.c kernel/ include/linux/uaccess.h; then
+              echo "[KSU] 内核提供 probe_kernel_write，保留 legacy 映射"
+            else
+              sed -i '/^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$/,/^#endif$/c\/* 本内核已 backport 5.8 nofault API：直接使用 copy_to_kernel_nofault */' "$PM"
+              if grep -qE '^[[:space:]]*probe_kernel_write\(' "$PM"; then echo "[ERROR] KSU probe_kernel_write 兼容修复未生效"; exit 1; fi
+              echo "[KSU] 已移除 $PM 中的 probe_kernel_write 映射（改用 copy_to_kernel_nofault）"
+            fi
+          fi
           # net/core/netprio_cgroup.c：css->cgroup->id 在 5.4 已不存在，统一改为 css->id
           sed -i 's/css->cgroup->id/css->id/g' net/core/netprio_cgroup.c
           grep -rl 'css->cgroup->id' --include='*.c' --include='*.h' . 2>/dev/null | xargs -r sed -i 's/css->cgroup->id/css->id/g'

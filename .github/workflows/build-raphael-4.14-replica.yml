@@ -245,6 +245,28 @@ jobs:
           sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
           sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c
           sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c
+          # --- KSU-Next legacy sulog/event.c：<4.19 走 get_monotonic_boottime()（需 struct timespec *），
+          #     但该文件无条件声明 struct timespec64 ts;，4.14 下触发 -Werror,-Wincompatible-pointer-types ---
+          EV=drivers/kernelsu/sulog/event.c
+          if [ -f "$EV" ]; then
+            if grep -qE '^[[:space:]]*struct timespec64 ts;' "$EV"; then
+              sed -i 's/struct timespec64 ts;/#if KERNEL_VERSION(4, 19, 0) <= LINUX_VERSION_CODE\n    struct timespec64 ts;\n#else\n    struct timespec ts;\n#endif/' "$EV"
+            fi
+            if ! grep -qE '^[[:space:]]*struct timespec ts;' "$EV"; then echo "[ERROR] KSU event.c timespec 条件化未生效"; exit 1; fi
+            echo "[KSU] event.c ts 声明已按内核版本条件化"
+          fi
+          # --- KSU-Next legacy patch_memory.c：内核若未真正提供 probe_kernel_write（注释提及不算），
+          #     需移除 <5.8 兼容映射，否则 vmlinux 报 undefined symbol: probe_kernel_write ---
+          PM=drivers/kernelsu/hook/patch_memory.c
+          if [ -f "$PM" ] && grep -q 'probe_kernel_write' "$PM"; then
+            if grep -qE '(EXPORT_SYMBOL(_GPL)?[(]probe_kernel_write[)]|^[A-Za-z_].*probe_kernel_write[[:space:]]*[(])' mm/maccess.c 2>/dev/null; then
+              echo "[KSU] 内核提供 probe_kernel_write，保留 legacy 映射"
+            else
+              sed -i '/^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$/,/^#endif$/c\/* 本内核已 backport 5.8 nofault API：直接使用 copy_to_kernel_nofault */' "$PM"
+              if grep -qE '^[[:space:]]*probe_kernel_write[(]' "$PM"; then echo "[ERROR] patch_memory.c 兼容修复未生效"; exit 1; fi
+              echo "[KSU] 已移除 patch_memory.c 中 probe_kernel_write 映射"
+            fi
+          fi
           echo "=== 兼容修复已应用 ==="
 
       - name: 设置 ccache 缓存

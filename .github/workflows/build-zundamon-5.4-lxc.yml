@@ -22,6 +22,11 @@ name: Zundamon-5.4 LXC/Docker [raphael]
 # 11) 诊断留档：build_full.log 无论成败都上传，失败可直接取日志定位
 # 12) 出包断言加严：内核镜像与 dtbo.img 非空、内核段尾 dtb 一致性通过后才允许出包
 
+# v6（本次）：KSU 集成切换到 KernelSU-Next legacy
+# 13) 移除内核树内置的旧 KSU 实现（unity build 世代 / KSU_VERSION=32525），改由工作流注入 KernelSU-Next legacy v3.4.0-legacy
+# 14) 5.4 非GKI 走 syscall table hook（内核 >=4.17 满足；官方 KPROBES hook 标注不适用于 <5.10）
+# 15) 同步清理旧 defconfig 开关 CONFIG_KSU_HACK_ARM64_BRANCH_LINK / CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED
+
 env:
   TZ: Asia/Shanghai
   KERNEL_VERSION: '5.4'
@@ -79,10 +84,10 @@ jobs:
     if: github.event.repository.owner.id == github.event.sender.id
 
     steps:
-      - name: "[1/20] 拉取仓库"
+      - name: "[1/21] 拉取仓库"
         uses: actions/checkout@v4
 
-      - name: "[2/20] 读取 config.env 与编译参数"
+      - name: "[2/21] 读取 config.env 与编译参数"
         run: |
           grep '^KERNEL_SOURCE=' config.env >> $GITHUB_ENV
           grep '^KERNEL_SOURCE_BRANCH=' config.env >> $GITHUB_ENV
@@ -123,13 +128,13 @@ jobs:
             echo "| 运行 | #${{ github.run_number }} |"
           } >> $GITHUB_STEP_SUMMARY
 
-      - name: "[3/20] 安装编译依赖"
+      - name: "[3/21] 安装编译依赖"
         run: |
           sudo apt-get update
           sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev pkg-config ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-      - name: "[4/20] 下载 clang 编译器"
+      - name: "[4/21] 下载 clang 编译器"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           if git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp; then
@@ -143,13 +148,13 @@ jobs:
           ls clang-aosp
           $GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin/clang --version | head -3
 
-      - name: "[5/20] 下载内核源码"
+      - name: "[5/21] 下载内核源码"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
           git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
           cd android-kernel && git log -1 --oneline
 
-      - name: "[6/20] 容器能力注入（5.4 校准清单）"
+      - name: "[6/21] 容器能力注入（5.4 校准清单）"
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           set -e
@@ -269,7 +274,7 @@ jobs:
           echo "===== 畸形行残留检查（应为空）====="
           grep -n '^CONFIG_!' "$CFG" || echo "无畸形行"
 
-      - name: "[7/20] 注入 Droidspaces Non-GKI 补丁"
+      - name: "[7/21] 注入 Droidspaces Non-GKI 补丁"
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -297,7 +302,7 @@ jobs:
           git diff --stat net/netfilter/xt_qtaguid.c || true
           grep -n 'rtnl_link_stats64 \*stats' net/netfilter/xt_qtaguid.c | head -3 || true
 
-      - name: "[8/20] 修复 dtb/dtbo 构建（5.4 条件宏失配）"
+      - name: "[8/21] 修复 dtb/dtbo 构建（5.4 条件宏失配）"
         if: env.NEED_DTBO == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -308,7 +313,30 @@ jobs:
           echo "----- 修复后 qcom/Makefile -----"
           cat $MK
 
-      - name: "[9/20] 源码编译修复"
+      - name: "[9/21] 替换内置 KernelSU 为 KernelSU-Next legacy"
+        if: env.ENABLE_KERNELSU == 'true'
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+          CFG="arch/arm64/configs/${{ env.KERNEL_CONFIG }}"
+          # 1) 移除内核树内置的旧实现（unity build 世代，KSU_VERSION=32525）及其接入
+          rm -rf drivers/staging/kernelsu
+          sed -i '/kernelsu/d' drivers/staging/Kconfig
+          sed -i '/kernelsu/d' drivers/staging/Makefile
+          # 2) 清理旧实现遗留的 defconfig 开关（新 Kconfig 无对应项）
+          sed -i '/^CONFIG_KSU_HACK_ARM64_BRANCH_LINK=/d;/^CONFIG_KSU_THRONE_TRACKER_ALWAYS_THREADED=/d' "$CFG"
+          # 3) 注入 KernelSU-Next legacy（symlink 至 drivers/kernelsu 并接入 drivers/Makefile + drivers/Kconfig）
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
+          # 4) 打开 KSU 与 hook 开关：5.4 走 syscall table hook（>=4.17 满足；kprobes hook 官方不适用于 <5.10）
+          grep -q '^CONFIG_KSU=y' "$CFG" || echo "CONFIG_KSU=y" >> "$CFG"
+          sed -i '/^CONFIG_KSU_KPROBES_HOOK=/d' "$CFG"
+          grep -q '^CONFIG_KSU_SYSCALL_TABLE_HOOK=y' "$CFG" || echo "CONFIG_KSU_SYSCALL_TABLE_HOOK=y" >> "$CFG"
+          echo "--- KSU 集成确认（接入点 / 开关 / 残留引用）---"
+          grep -n 'kernelsu' drivers/Makefile drivers/Kconfig
+          grep -n '^CONFIG_KSU' "$CFG"
+          git grep -Il 'kernelsu' -- ':!KernelSU-Next' || echo '无其它跟踪文件引用 kernelsu'
+
+      - name: "[10/21] 源码编译修复"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           # 5.4 的 dtc 需链接 libyaml；强制写入链接库，避免 pkg-config 缺失导致 HOSTLD 失败
@@ -334,20 +362,20 @@ jobs:
           if [ -f fs/btrfs/inode.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c || true; fi
           if [ -f fs/btrfs/file.c ]; then sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c || true; fi
 
-      - name: "[10/20] 设置 ccache 缓存"
+      - name: "[11/21] 设置 ccache 缓存"
         if: env.USE_CCACHE == 'true'
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: build-raphael-5.4-lxc
           max-size: 3G
 
-      - name: "[11/20] 生成 defconfig"
+      - name: "[12/21] 生成 defconfig"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
           make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
 
-      - name: "[12/20] 编译内核"
+      - name: "[13/21] 编译内核"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
           export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
@@ -385,7 +413,7 @@ jobs:
             exit 1
           fi
 
-      - name: "[13/20] 容器配置自检（硬断言）"
+      - name: "[14/21] 容器配置自检（硬断言）"
         if: env.ENABLE_LXC_DOCKER == 'true'
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -419,7 +447,7 @@ jobs:
           if [ "$FAIL" -ne 0 ]; then echo "### 容器配置自检失败：$FAIL 项异常"; exit 1; fi
           echo "### 容器配置自检通过"
 
-      - name: "[14/20] 编译结果核查"
+      - name: "[15/21] 编译结果核查"
         if: always()
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -433,7 +461,7 @@ jobs:
           cp -f out/.config out/config.used 2>/dev/null || true
           cp -f arch/arm64/configs/${{ env.KERNEL_CONFIG }} out/defconfig.used 2>/dev/null || true
 
-      - name: "[15/20] 构建 dtb 与 dtbo.img"
+      - name: "[16/21] 构建 dtb 与 dtbo.img"
         if: env.NEED_DTBO == 'true'
         run: |
           set -e
@@ -471,7 +499,7 @@ jobs:
           fi
           ls -l $Q/dtbo.img
 
-      - name: "[16/20] 打包 AnyKernel3（v0 boot：dtb 追加进内核段，保证 boot/dtbo 同源）"
+      - name: "[17/21] 打包 AnyKernel3（v0 boot：dtb 追加进内核段，保证 boot/dtbo 同源）"
         run: |
           set -e
           cd $GITHUB_WORKSPACE/kernel_workspace
@@ -518,13 +546,13 @@ jobs:
             echo '```'
           } >> $GITHUB_STEP_SUMMARY
 
-      - name: "[17/20] 上传内核刷机包（含 dtb/dtbo 同源三件套）"
+      - name: "[18/21] 上传内核刷机包（含 dtb/dtbo 同源三件套）"
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.KERNEL_ZIP_NAME }}-${{ env.ENABLE_LXC_DOCKER == 'true' && 'lxc' || 'base' }}${{ inputs.kernel_suffix }}
           path: kernel_workspace/AnyKernel3/*
 
-      - name: "[18/20] 上传配置与校验信息"
+      - name: "[19/21] 上传配置与校验信息"
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -534,7 +562,7 @@ jobs:
             kernel_workspace/android-kernel/out/defconfig.used
           if-no-files-found: warn
 
-      - name: "[19/20] 上传构建日志（诊断）"
+      - name: "[20/21] 上传构建日志（诊断）"
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -543,7 +571,7 @@ jobs:
             kernel_workspace/android-kernel/build_full.log
           if-no-files-found: warn
 
-      - name: "[20/20] 构建汇总"
+      - name: "[21/21] 构建汇总"
         if: always()
         run: |
           {

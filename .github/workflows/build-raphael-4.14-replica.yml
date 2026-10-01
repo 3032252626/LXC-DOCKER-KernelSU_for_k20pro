@@ -1,489 +1,1016 @@
 name: "4.14 Zundamon 快速构建 [复刻版]"
 
+
+
 # 结构复刻自 cctv18/oppo_oplus_realme_sm8850 的 fastbuild 工作流
+
 # 适配对象：3032252626/kernel_xiaomi_raphael (oss-base / 4.14 / raphael sm8150)
+
 # 配置来源：config-4.14.env
 
+
+
 env:
+
   TZ: Asia/Shanghai
+
   KERNEL_VERSION: '4.14'
+
   CCACHE_KEY: ccache-raphael-4.14-replica
 
+
+
 on:
+
   workflow_dispatch:
+
     inputs:
+
       llvm_config:
+
         description: 'LLVM=1 LLVM_IAS=1 (CFI_CLANG 需要；编译报错时可改 n)'
+
         required: true
+
         type: choice
+
         default: 'y'
+
         options:
+
           - 'y'
+
           - 'n'
+
       enable_lxc:
+
         description: 'LXC/Docker 容器支持 (true=容器版, false=基线版)'
+
         required: true
+
         type: choice
+
         default: 'true'
+
         options:
+
           - 'true'
+
           - 'false'
+
       enable_ksu:
+
         description: '注入 KernelSU-Next legacy (4.14 非GKI: manual hook)'
+
         required: true
+
         type: choice
+
         default: 'true'
+
         options:
+
           - 'true'
+
           - 'false'
+
       build_dtbo:
+
         description: '构建 dtb/dtbo.img 并打进卡刷包'
+
         required: true
+
         type: choice
+
         default: 'true'
+
         options:
+
           - 'true'
+
           - 'false'
+
       os4_adapt:
+
         description: 'OS4 适配打包 (true=仅 kernel+ROM原dtb，不打包/不刷 dtbo)'
+
         required: true
+
         type: choice
+
         default: 'false'
+
         options:
+
           - 'false'
+
           - 'true'
+
       ccache_enable:
+
         description: '启用 ccache 缓存 (首次编译较慢，二次开始命中缓存)'
+
         required: true
+
         type: choice
+
         default: 'true'
+
         options:
+
           - 'true'
+
           - 'false'
+
       variant:
+
         description: '构建变体: plan_c=含方案C / revert_plan_c=回退方案C(上游基线) / no_driver=保留dtsi仅关驱动'
+
         required: true
+
         type: choice
+
         default: 'plan_c'
+
         options:
+
           - plan_c
+
           - revert_plan_c
+
           - no_driver
 
+
+
 concurrency:
+
   group: raphael-4.14-replica-${{ github.ref }}
+
   cancel-in-progress: false
 
+
+
 jobs:
+
   build:
+
     name: 4.14 replica build
+
     runs-on: ubuntu-latest
+
     if: github.event.repository.owner.id == github.event.sender.id
+
     steps:
+
       - uses: actions/checkout@v4
 
+
+
       - name: "[1/11] 读取配置与编译参数"
+
         run: |
+
           grep -E '^(KERNEL_SOURCE|KERNEL_SOURCE_BRANCH|KERNEL_CONFIG|KERNEL_ZIP_NAME|KERNEL_IMAGE_NAME|ENABLE_LXC_DOCKER|ENABLE_KERNELSU|KERNELSU_TAG)=' config-4.14.env >> $GITHUB_ENV
+
           echo "LLVM_CONFIG=${{ github.event.inputs.llvm_config }}" >> $GITHUB_ENV
+
           echo "ENABLE_LXC_DOCKER=${{ github.event.inputs.enable_lxc }}" >> $GITHUB_ENV
+
           echo "ENABLE_KERNELSU=${{ github.event.inputs.enable_ksu }}" >> $GITHUB_ENV
+
           echo "NEED_DTBO=${{ github.event.inputs.build_dtbo }}" >> $GITHUB_ENV
+
           echo "USE_CCACHE=${{ github.event.inputs.ccache_enable }}" >> $GITHUB_ENV
+
           echo "OS4_ADAPT=${{ github.event.inputs.os4_adapt }}" >> $GITHUB_ENV
+
           echo "### 编译参数 (4.14 复刻版)" >> $GITHUB_STEP_SUMMARY
+
           echo "| 项 | 值 |" >> $GITHUB_STEP_SUMMARY
+
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+
           echo "| 内核源 | ${{ env.KERNEL_SOURCE }} |" >> $GITHUB_STEP_SUMMARY
+
           echo "| 分支 | ${{ env.KERNEL_SOURCE_BRANCH }} |" >> $GITHUB_STEP_SUMMARY
+
           echo "| defconfig | ${{ env.KERNEL_CONFIG }} |" >> $GITHUB_STEP_SUMMARY
+
           echo "| LLVM | ${{ github.event.inputs.llvm_config }} |" >> $GITHUB_STEP_SUMMARY
+
           echo "| LXC/Docker | ${{ github.event.inputs.enable_lxc }} |" >> $GITHUB_STEP_SUMMARY
+
           echo "| KernelSU | ${{ github.event.inputs.enable_ksu }} |" >> $GITHUB_STEP_SUMMARY
+
           echo "| dtbo | ${{ github.event.inputs.build_dtbo }} |" >> $GITHUB_STEP_SUMMARY
+
           echo "| OS4适配打包 | ${{ github.event.inputs.os4_adapt }} |" >> $GITHUB_STEP_SUMMARY
 
+
+
       - name: "[2/11] 安装构建依赖"
+
         run: |
+
           sudo apt-get update
+
           sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler libyaml-dev ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
+
+
       - name: "[3/11] 下载 clang-aosp 工具链 (clang-r450784d)"
+
         run: |
+
           cd $GITHUB_WORKSPACE/kernel_workspace
+
           mkdir clang-aosp
+
           git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release clang-aosp
 
+
+
       - name: "[4/11] 下载 4.14 内核源码"
+
         run: |
+
           cd $GITHUB_WORKSPACE/kernel_workspace
+
           git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
 
+
+
       - name: "[4.5/11] 回退方案C（恢复上游 8fc5acac 基线）"
+
         if: github.event.inputs.variant == 'revert_plan_c'
+
         run: |
+
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
           git fetch -q --depth=100 origin ${{ env.KERNEL_SOURCE_BRANCH }}
+
           git cat-file -t 8fc5acac >/dev/null 2>&1 || { echo "### 取不到上游基线 8fc5acac，停止"; exit 1; }
+
           git checkout 8fc5acac -- arch/arm64/boot/dts/qcom/sm8150.dtsi arch/arm64/configs/raphael_defconfig drivers/cpufreq/Kconfig drivers/cpufreq/Makefile
+
           rm -f drivers/cpufreq/qcom-cpufreq-hw.c
+
           echo "=== 回退后 HEAD: $(git log --oneline -1) ==="
+
           git diff --stat HEAD | tail -8
+
           if grep -q 'ARM_QCOM_CPUFREQ_HW' arch/arm64/configs/raphael_defconfig; then echo "[WARN] defconfig 仍含 CPUFREQ_HW"; else echo "[OK ] defconfig 已无 CPUFREQ_HW"; fi
+
           if grep -q 'cpufreq_hw' arch/arm64/boot/dts/qcom/sm8150.dtsi; then echo "[WARN] dtsi 仍含 cpufreq_hw"; else echo "[OK ] dtsi 已无 cpufreq_hw"; fi
+
           ls -l drivers/cpufreq/qcom-cpufreq-hw.c 2>/dev/null && echo "[WARN] 驱动文件仍在" || echo "[OK ] 驱动文件已移除"
 
+
+
       - name: "[4.6/11] 变体 no_driver：保留方案C dtsi，仅关闭 cpufreq-hw 驱动"
+
         if: github.event.inputs.variant == 'no_driver'
+
         run: |
+
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
           sed -i 's|^CONFIG_ARM_QCOM_CPUFREQ_HW=y|# CONFIG_ARM_QCOM_CPUFREQ_HW is not set|' arch/arm64/configs/raphael_defconfig
+
           if grep -q 'ARM_QCOM_CPUFREQ_HW=y' arch/arm64/configs/raphael_defconfig; then echo "[WARN] 驱动开关仍为 y"; else echo "[OK ] 已关闭 CONFIG_ARM_QCOM_CPUFREQ_HW"; fi
+
           printf "dtsi 中 cpufreq_hw 引用数: "; grep -c 'cpufreq_hw' arch/arm64/boot/dts/qcom/sm8150.dtsi || true
+
           printf "dtsi 中 freq-domain 引用数: "; grep -c 'qcom,freq-domain' arch/arm64/boot/dts/qcom/sm8150.dtsi || true
 
+
+
       - name: "[5/11] 注入 LXC/Docker 容器配置"
+
         if: env.ENABLE_LXC_DOCKER == 'true'
+
         run: |
+
           cd $GITHUB_WORKSPACE/kernel_workspace
+
           wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/LXC-DOCKER-OPEN-CONFIG.sh
+
           chmod 755 LXC-DOCKER-OPEN-CONFIG.sh
+
           sed -i '/^CONFIG_PID_NS=/d' android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
           sed -i '/^CONFIG_BRIDGE_NETFILTER=/d' android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
           echo "CONFIG_PID_NS=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
           echo "CONFIG_BRIDGE_NETFILTER=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
           ./LXC-DOCKER-OPEN-CONFIG.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }} -w
+
           echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
           echo "CONFIG_IP6_NF_IPTABLES=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
           echo "CONFIG_IP6_NF_FILTER=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
           echo "CONFIG_NF_TABLES_IPV4=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
           echo "CONFIG_NF_TABLES_IPV6=y" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
+
+
       - name: "[6/11] 应用 xt_qtaguid 与 Droidspaces non-GKI 补丁"
+
         run: |
+
           cd $GITHUB_WORKSPACE/kernel_workspace
+
           wget https://raw.githubusercontent.com/3032252626/android-lxc-docker/main/xt_qtaguid.patch
+
           patch -p1 -d android-kernel < xt_qtaguid.patch || echo "xt_qtaguid.patch not applicable"
+
           cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
           curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch | patch -p1 || echo "[WARN] 补丁 01 应用失败"
+
           curl -LSs https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/main/Documentation/resources/kernel-patches/non-GKI/02.fix_restore%20cgroup%20file%20prefix%20handling%20.patch | patch -p1 || echo "[WARN] 补丁 02 应用失败"
 
+
+
       - name: "[7/11] 容器配置补充 (Non-GKI 校准清单)"
+
         if: env.ENABLE_LXC_DOCKER == 'true'
+
         run: |
+
           CONFIG_FILE="$GITHUB_WORKSPACE/kernel_workspace/android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}"
+
           added=0; skipped=0
+
           check_add() {
+
             local key="$1" val="$2"
+
             if grep -q "^${key}=" "$CONFIG_FILE"; then
+
               skipped=$((skipped+1))
+
             else
+
               echo "$key=$val" >> "$CONFIG_FILE"
+
               added=$((added+1))
+
             fi
+
           }
+
           check_add CONFIG_SYSCTL y
+
           check_add CONFIG_SYSVIPC y
+
           check_add CONFIG_POSIX_MQUEUE y
+
           check_add CONFIG_NAMESPACES y
+
           check_add CONFIG_PID_NS y
+
           check_add CONFIG_UTS_NS y
+
           check_add CONFIG_IPC_NS y
+
           check_add CONFIG_SECCOMP y
+
           check_add CONFIG_SECCOMP_FILTER y
+
           check_add CONFIG_CGROUPS y
+
           check_add CONFIG_CGROUP_DEVICE y
+
           check_add CONFIG_CGROUP_PIDS y
+
           check_add CONFIG_MEMCG y
+
           check_add CONFIG_CGROUP_SCHED y
+
           check_add CONFIG_FAIR_GROUP_SCHED y
+
           check_add CONFIG_CGROUP_FREEZER y
+
           check_add CONFIG_CGROUP_NET_PRIO y
+
           check_add CONFIG_DEVTMPFS y
+
           check_add CONFIG_OVERLAY_FS y
+
           check_add CONFIG_TMPFS_POSIX_ACL y
+
           check_add CONFIG_TMPFS_XATTR y
+
           check_add CONFIG_FW_LOADER y
+
           check_add CONFIG_FW_LOADER_USER_HELPER y
+
           check_add CONFIG_FW_LOADER_COMPRESS y
+
           check_add CONFIG_NET_NS y
+
           check_add CONFIG_VETH y
+
           check_add CONFIG_BRIDGE y
+
           check_add CONFIG_NETFILTER y
+
           check_add CONFIG_BRIDGE_NETFILTER y
+
           check_add CONFIG_NETFILTER_ADVANCED y
+
           check_add CONFIG_NF_CONNTRACK y
+
           check_add CONFIG_IP_NF_IPTABLES y
+
           check_add CONFIG_IP_NF_FILTER y
+
           check_add CONFIG_NF_NAT y
+
           check_add CONFIG_NF_TABLES y
+
           check_add CONFIG_IP_NF_TARGET_MASQUERADE y
+
           check_add CONFIG_NETFILTER_XT_TARGET_MASQUERADE y
+
           check_add CONFIG_NETFILTER_XT_TARGET_TCPMSS y
+
           check_add CONFIG_NETFILTER_XT_MATCH_ADDRTYPE y
+
           check_add CONFIG_NF_CONNTRACK_NETLINK y
+
           check_add CONFIG_NF_NAT_REDIRECT y
+
           check_add CONFIG_IP_ADVANCED_ROUTER y
+
           check_add CONFIG_IP_MULTIPLE_TABLES y
+
           check_add CONFIG_NF_CONNTRACK_IPV4 y
+
           check_add CONFIG_NF_NAT_IPV4 y
+
           check_add CONFIG_IP_NF_NAT y
+
           echo "=== 配置补充完成：新增 $added 项，跳过 $skipped 项 ==="
 
-      - name: "[8/11] 注入 KernelSU-Next legacy (4.14 manual hook)"
-        if: env.ENABLE_KERNELSU == 'true'
-        run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
-          CFG=arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-          echo "CONFIG_MODULES=y" >> $CFG
-          echo "CONFIG_KPROBES=y" >> $CFG
-          echo "CONFIG_HAVE_KPROBES=y" >> $CFG
-          echo "CONFIG_KPROBE_EVENTS=y" >> $CFG
-          grep -q '^CONFIG_KSU=y' $CFG || echo "CONFIG_KSU=y" >> $CFG
-          # 4.14 < 4.17：KSU_SYSCALL_TABLE_HOOK 要求内核 >=4.17；KSU_KPROBES_HOOK 官方标注不适用于 <5.10
-          # 故清理这两项，强制走 manual hook（KSU_MANUAL_HOOK=y 时 Kconfig 的 hook choice 整体不生效）
-          sed -i '/^CONFIG_KSU_KPROBES_HOOK=/d;/^CONFIG_KSU_SYSCALL_TABLE_HOOK=/d' $CFG
-          grep -q '^CONFIG_KSU_MANUAL_HOOK=y' $CFG || echo "CONFIG_KSU_MANUAL_HOOK=y" >> $CFG
-          echo "--- KSU 集成确认 ---"
-          grep -n 'kernelsu' drivers/Makefile drivers/Kconfig
-      - name: "[9/11] 源码编译兼容修复 (4.14 必需)"
-        run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
-          sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
-          sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c
-          sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c
-          # --- KSU-Next legacy sulog/event.c：<4.19 走 get_monotonic_boottime()（需 struct timespec *），
-          #     但该文件无条件声明 struct timespec64 ts;，4.14 下触发 -Werror,-Wincompatible-pointer-types ---
-          EV=drivers/kernelsu/sulog/event.c
-          if [ -f "$EV" ]; then
-            if grep -qE '^[[:space:]]*struct timespec64 ts;' "$EV"; then
-              sed -i 's/struct timespec64 ts;/#if KERNEL_VERSION(4, 19, 0) <= LINUX_VERSION_CODE\n    struct timespec64 ts;\n#else\n    struct timespec ts;\n#endif/' "$EV"
-            fi
-            if ! grep -qE '^[[:space:]]*struct timespec ts;' "$EV"; then echo "[ERROR] KSU event.c timespec 条件化未生效"; exit 1; fi
-            echo "[KSU] event.c ts 声明已按内核版本条件化"
-          fi
-          # --- KSU-Next legacy patch_memory.c：内核若未真正提供 probe_kernel_write（注释提及不算），
-          #     需移除 <5.8 兼容映射，否则 vmlinux 报 undefined symbol: probe_kernel_write ---
-          PM=drivers/kernelsu/hook/patch_memory.c
-          if [ -f "$PM" ] && grep -q 'probe_kernel_write' "$PM"; then
-            if grep -qE '(EXPORT_SYMBOL(_GPL)?[(]probe_kernel_write[)]|^[A-Za-z_].*probe_kernel_write[[:space:]]*[(])' mm/maccess.c 2>/dev/null; then
-              echo "[KSU] 内核提供 probe_kernel_write，保留 legacy 映射"
-            else
-              sed -i '/^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$/,/^#endif$/c\/* 本内核已 backport 5.8 nofault API：直接使用 copy_to_kernel_nofault */' "$PM"
-              if grep -qE '^[[:space:]]*probe_kernel_write[(]' "$PM"; then echo "[ERROR] patch_memory.c 兼容修复未生效"; exit 1; fi
-              echo "[KSU] 已移除 patch_memory.c 中 probe_kernel_write 映射"
-            fi
-          fi
-          echo "=== 兼容修复已应用 ==="
 
-      - name: 设置 ccache 缓存
-        if: env.USE_CCACHE == 'true'
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ env.CCACHE_KEY }}
-          max-size: 2G
 
-      - name: "[9.5/11] 集成 KSU-Next legacy manual hook 入口 (4.14 reboot)"
-        run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          if grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
-            echo "[OK] kernel/reboot.c 已存在 ksu_handle_sys_reboot"
-          else
-            cat > /tmp/ksu_reboot_hook.txt <<'EOF'
-          #ifdef CONFIG_KSU_MANUAL_HOOK
-          	extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
-          	if (ksu_handle_sys_reboot(magic1, magic2, cmd, &arg))
-          		return 0;
-          #endif
-          EOF
-            S=$(awk '/^SYSCALL_DEFINE4[(]reboot,/{print NR; exit}' kernel/reboot.c)
-            M=$(awk -v s="$S" 'NR>s && /^[{]/{print NR; exit}' kernel/reboot.c)
-            echo "[i] SYSCALL_DEFINE4(reboot) 函数体起始行: $M"
-            if [ -z "$M" ]; then echo "### 未定位 reboot 函数体，manual hook 无法集成"; exit 1; fi
-            N=$(awk -v s="$M" 'NR>s && /^[[:space:]]*$/{print NR; exit}' kernel/reboot.c)
-            N=${N:-$((M+1))}
-            echo "[i] 插入锚点(首个空行)行号: $N"
-            sed -i "$((N-1))r /tmp/ksu_reboot_hook.txt" kernel/reboot.c
-            echo "[OK] 已插入 ksu_handle_sys_reboot 调用点"
-          fi
-          grep -q "ksu_handle_sys_reboot" kernel/reboot.c || { echo "### manual hook 集成校验失败"; exit 1; }
-          sed -n '/SYSCALL_DEFINE4(reboot,/,/^}/p' kernel/reboot.c | head -22
-
-      - name: "[10/11] 编译内核"
-        run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
-          export KBUILD_BUILD_HOST=17
-          export KBUILD_BUILD_USER=HyperPower
-          if [ "${{ env.USE_CCACHE }}" = "true" ]; then
-            export CC_WRAP="ccache clang"
-          else
-            export CC_WRAP="clang"
-          fi
-          START=$(date +%s)
-          make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-          LOG=build_full.log
-          set +e
-          # clang-r450784d(>13) 起 -Wincompatible-function-pointer-types 默认并入 -Werror：
-          # 4.14 CAF 树里 io-pgtable-arm-v7s.c 的 arm_v7s_unmap 仍为 int（上游后期才改 size_t），
-          # 属编译器版本噪音而非真实缺陷，这里降级为警告，保持与 stock 树相同的代码生成。
-          export KCFLAGS="-Wno-incompatible-function-pointer-types"
-          if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
-            make -j$(nproc --all) CC="$CC_WRAP" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1 > $LOG 2>&1
-          else
-            make -j$(nproc --all) CC="$CC_WRAP" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" > $LOG 2>&1
-          fi
-          RC=$?
-          set -e
-          END=$(date +%s)
-          echo "编译退出码: $RC | 编译耗时: $((END-START)) 秒"
-          echo "########## 编译错误汇总（去重） ##########"
-          grep -nE "error:|fatal error:|Error [0-9]+|\*\*\* " $LOG | sort -u | head -60 || true
-          if [ "$RC" -ne 0 ]; then
-            echo "########## make 失败，日志尾部 150 行 ##########"
-            tail -n 150 $LOG
-            cp -f $LOG out/build_failed.log 2>/dev/null || true
-            exit 1
-          fi
-          if [ ! -f out/arch/arm64/boot/Image.gz ]; then
-            echo "########## 未生成 Image.gz，日志尾部 150 行 ##########"
-            tail -n 150 $LOG
-            cp -f $LOG out/build_failed.log 2>/dev/null || true
-            exit 1
-          fi
-          echo "| 编译耗时 | $((END-START)) 秒 |" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ env.USE_CCACHE }}" = "true" ]; then
-            ccache -s || true
-          fi
-
-      - name: 编译结果核查 (4.14 基线)
-        if: always()
-        run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          ls -l out/arch/arm64/boot/ 2>/dev/null || true
-          if [ -f out/.config ]; then
-            echo "===== 关键配置 (4.14 开机基线) ====="
-            for k in CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_BUILD_ARM64_DT_OVERLAY CONFIG_MODULES CONFIG_KPROBES CONFIG_KSU CONFIG_KSU_MANUAL_HOOK; do
-              printf "%-38s %s\n" "$k" "$(grep -E "^${k}=" out/.config || echo '未启用/未设置')"
-            done
-          fi
-          cp -f out/.config out/config.used 2>/dev/null || true
-          cp -f arch/arm64/configs/${{ env.KERNEL_CONFIG }} out/defconfig.used 2>/dev/null || true
-
-      - name: 开机基线硬断言 (4.14)
-        run: |
-          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          FAIL=0
-          for k in CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_BUILD_ARM64_DT_OVERLAY; do
-            if grep -qE "^${k}=y$" out/.config; then echo "  [OK ] $k"; else echo "  [MISS] $k"; FAIL=$((FAIL+1)); fi
-          done
-          if [ "${{ env.ENABLE_KERNELSU }}" = "true" ]; then
-            for k in CONFIG_MODULES CONFIG_KPROBES CONFIG_KSU CONFIG_KSU_MANUAL_HOOK; do
-              if grep -qE "^${k}=y$" out/.config; then echo "  [OK ] $k"; else echo "  [MISS] $k"; FAIL=$((FAIL+1)); fi
-            done
-            grep -rq 'kernelsu' drivers/Makefile 2>/dev/null || { echo "  [MISS] drivers/Makefile 未接入 kernelsu"; FAIL=$((FAIL+1)); }
-          fi
-          if [ "$FAIL" -ne 0 ]; then echo "### 开机基线自检失败：$FAIL 项异常，禁止出包"; exit 1; fi
-          echo "### 开机基线自检通过"
-
-      - name: "[11/11] 构建 dtb/dtbo.img (sm8150-v2 为 base；OS4 适配模式自动跳过)"
-        if: github.event.inputs.os4_adapt != 'true'
-        run: |
-          set -e
-          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
-          if [ "${{ env.USE_CCACHE }}" = "true" ]; then export CC_WRAP="ccache clang"; else export CC_WRAP="clang"; fi
-          if [ "${LLVM_CONFIG}" = "y" ]; then
-            make -j$(nproc --all) O=out ARCH=arm64 CC="$CC_WRAP" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 dtbs || true
-          else
-            make -j$(nproc --all) O=out ARCH=arm64 CC="$CC_WRAP" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- dtbs || true
-          fi
-          Q=out/arch/arm64/boot/dts/qcom
-          ls -l $Q/sm8150-v2.dtb $Q/raphael-sm8150-overlay.dtbo $Q/dtbo.img 2>/dev/null || true
-          [ -f $Q/sm8150-v2.dtb ] || { echo "### 缺少 sm8150-v2.dtb，构建失败"; exit 1; }
-          [ -f $Q/raphael-sm8150-overlay.dtbo ] || { echo "### 缺少 raphael-sm8150-overlay.dtbo，构建失败"; exit 1; }
-          if [ ! -f $Q/dtbo.img ]; then
-            python3 scripts/mkdtboimg.py create $Q/dtbo.img --page_size=4096 $Q/raphael-sm8150-overlay.dtbo
-          fi
-          ls -l $Q/dtbo.img
-
-      - name: 打包 AnyKernel3 (OS4 适配=仅 kernel+ROM原dtb；默认=sm8150-v2 dtb+dtbo)
+      - name: "[7.6/11] 合并 ROM(stock) 专有配置差集 (批次1: 配置对齐)"
         run: |
           cd $GITHUB_WORKSPACE/kernel_workspace
-          git clone https://github.com/osm0sis/AnyKernel3
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-          sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
-          sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
-          Q=android-kernel/out/arch/arm64/boot/dts/qcom
-          KIMG=${KERNEL_IMAGE_NAME:-Image.gz-dtb}
-          rm -f AnyKernel3/dtb
-          if [ "${OS4_ADAPT:-false}" = "true" ]; then
-            echo "########## OS4 适配打包：kernel + ROM 原 dtb，不打包/不刷 dtbo ##########"
-            ROM_DIR=$GITHUB_WORKSPACE/os4
-            ROM_DTB=$ROM_DIR/raphael_kameyuki_os4_rom.dtb
-            [ -s "$ROM_DTB" ] || { echo "### 缺少 ROM 原 dtb ($ROM_DTB)，禁止出包"; exit 1; }
-            [ -s "$ROM_DIR/anykernel-os4.sh" ] || { echo "### 缺少 anykernel-os4.sh，禁止出包"; exit 1; }
-            KSRC=android-kernel/out/arch/arm64/boot/Image.gz
-            [ -s "$KSRC" ] || { echo "### 缺少 Image.gz，禁止出包"; exit 1; }
-            cp "$KSRC" AnyKernel3/Image.gz
-            cat AnyKernel3/Image.gz "$ROM_DTB" > AnyKernel3/$KIMG
-            rm -f AnyKernel3/Image.gz
-            DTBSZ=$(stat -c%s "$ROM_DTB")
-            A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
-            B=$(sha256sum "$ROM_DTB" | cut -d' ' -f1)
-            [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与 ROM 原 dtb 不一致，禁止出包"; exit 1; }
-            cp -f "$ROM_DIR/anykernel-os4.sh" AnyKernel3/anykernel.sh
-            sed -i 's|^\([[:space:]]*\)flash_generic dtbo;|\1# flash_generic dtbo; # OS4 adapt: dtbo 分区保持 ROM 原样|' AnyKernel3/tools/ak3-core.sh
-            grep -qE '^[[:space:]]*# flash_generic dtbo;' AnyKernel3/tools/ak3-core.sh || { echo "### ak3-core.sh 中 flash_generic dtbo 未成功注释，禁止出包"; exit 1; }
-            grep -q '^flash_boot;' AnyKernel3/anykernel.sh || { echo "### anykernel.sh 未切换到 flash_boot，禁止出包"; exit 1; }
-            if [ -f AnyKernel3/dtbo.img ]; then echo "### OS4 模式禁止打包 dtbo.img"; exit 1; fi
-            ls -l AnyKernel3/
-            sha256sum AnyKernel3/$KIMG "$ROM_DTB" | tee AnyKernel3/SHA256SUMS.txt
-            echo "### OS4 适配打包校验通过：kernel + ROM dtb ($DTBSZ B, $A)，未打包 dtbo"
-          else
-            BASE=$Q/sm8150-v2.dtb
-            [ -f "$BASE" ] || { echo "### 缺少 sm8150-v2.dtb，禁止出包"; exit 1; }
-            if [ -f android-kernel/out/arch/arm64/boot/Image.gz ]; then
-              SRC=android-kernel/out/arch/arm64/boot/Image.gz
+          CFG=android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          DELTA=$GITHUB_WORKSPACE/configs/raphael_stock_delta.config
+          if [ ! -s "$DELTA" ]; then echo "### 缺少 configs/raphael_stock_delta.config，停止"; exit 1; fi
+          sed -i '/^CONFIG_HZ_[0-9]\+=y/d;/^# CONFIG_HZ_[0-9]\+ is not set/d' "$CFG"
+          added=0; fixed=0; kept=0
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            key="${line%%=*}"
+            if grep -qF "$line" "$CFG"; then kept=$((kept+1)); continue; fi
+            if grep -q "^${key}=" "$CFG" || grep -q "^# ${key} is not set$" "$CFG"; then
+              sed -i "/^${key}=/d;/^# ${key} is not set$/d" "$CFG"
+              echo "$line" >> "$CFG"; fixed=$((fixed+1))
             else
-              SRC=android-kernel/out/arch/arm64/boot/$KIMG
+              echo "$line" >> "$CFG"; added=$((added+1))
             fi
-            cp "$SRC" AnyKernel3/$KIMG
-            DTBSZ=$(stat -c%s "$BASE")
-            if [ "$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)" != "$(sha256sum $BASE | cut -d' ' -f1)" ]; then
-              echo ">>> 内核镜像尾部 dtb 与 sm8150-v2.dtb 不一致，执行拼装对齐"
-              cat AnyKernel3/$KIMG "$BASE" > AnyKernel3/.kimg.tmp
-              mv -f AnyKernel3/.kimg.tmp AnyKernel3/$KIMG
+          done < "$DELTA"
+          echo "### 批次1 配置差集合并完成：新增 $added 项 / 修正 $fixed 项 / 已一致 $kept 项"
+          echo "| 批次1 ROM专有配置差集 | 新增 $added / 修正 $fixed / 已一致 $kept |" >> $GITHUB_STEP_SUMMARY
+          echo "===== 合并后关键项自检 ====="
+          for k in CONFIG_DEBUG_FS CONFIG_MMC CONFIG_MMC_BLOCK CONFIG_MMC_SDHCI CONFIG_DSI_PARSER CONFIG_ANDROID_LOW_MEMORY_KILLER CONFIG_MSM_TZ_LOG CONFIG_HZ CONFIG_KALLSYMS_ALL; do
+            printf "  %-38s %s\n" "$k" "$(grep -E "^${k}=" "$CFG" | head -1)"
+          done
+
+      - name: "[8/11] 注入 KernelSU-Next legacy (4.14 manual hook)"
+
+        if: env.ENABLE_KERNELSU == 'true'
+
+        run: |
+
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" | bash -s ${{ env.KERNELSU_TAG }}
+
+          CFG=arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
+          echo "CONFIG_MODULES=y" >> $CFG
+
+          echo "CONFIG_KPROBES=y" >> $CFG
+
+          echo "CONFIG_HAVE_KPROBES=y" >> $CFG
+
+          echo "CONFIG_KPROBE_EVENTS=y" >> $CFG
+
+          grep -q '^CONFIG_KSU=y' $CFG || echo "CONFIG_KSU=y" >> $CFG
+
+          # 4.14 < 4.17：KSU_SYSCALL_TABLE_HOOK 要求内核 >=4.17；KSU_KPROBES_HOOK 官方标注不适用于 <5.10
+
+          # 故清理这两项，强制走 manual hook（KSU_MANUAL_HOOK=y 时 Kconfig 的 hook choice 整体不生效）
+
+          sed -i '/^CONFIG_KSU_KPROBES_HOOK=/d;/^CONFIG_KSU_SYSCALL_TABLE_HOOK=/d' $CFG
+
+          grep -q '^CONFIG_KSU_MANUAL_HOOK=y' $CFG || echo "CONFIG_KSU_MANUAL_HOOK=y" >> $CFG
+
+          echo "--- KSU 集成确认 ---"
+
+          grep -n 'kernelsu' drivers/Makefile drivers/Kconfig
+
+      - name: "[9/11] 源码编译兼容修复 (4.14 必需)"
+
+        run: |
+
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+          sed -i 's/HOSTLDLIBS_dtc/HOSTLOADLIBES_dtc/g' scripts/dtc/Makefile
+
+          sed -i 's/ptep = huge_pmd_share/pte = huge_pmd_share/' arch/arm64/mm/hugetlbpage.c
+
+          sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/inode.c
+
+          sed -i 's/struct timespec now = current_time/struct timespec64 now = current_time/' fs/btrfs/file.c
+
+          # --- KSU-Next legacy sulog/event.c：<4.19 走 get_monotonic_boottime()（需 struct timespec *），
+
+          #     但该文件无条件声明 struct timespec64 ts;，4.14 下触发 -Werror,-Wincompatible-pointer-types ---
+
+          EV=drivers/kernelsu/sulog/event.c
+
+          if [ -f "$EV" ]; then
+
+            if grep -qE '^[[:space:]]*struct timespec64 ts;' "$EV"; then
+
+              sed -i 's/struct timespec64 ts;/#if KERNEL_VERSION(4, 19, 0) <= LINUX_VERSION_CODE\n    struct timespec64 ts;\n#else\n    struct timespec ts;\n#endif/' "$EV"
+
             fi
-            rm -f AnyKernel3/dtb
-            if [ "${NEED_DTBO:-false}" = "true" ]; then
-              [ -s $Q/dtbo.img ] || { echo "### dtbo.img 缺失，禁止出包"; exit 1; }
-              cp $Q/dtbo.img AnyKernel3/dtbo.img
-            fi
-            A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
-            B=$(sha256sum $BASE | cut -d' ' -f1)
-            [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与自编译 dtb 不一致，禁止出包"; exit 1; }
-            ls -l AnyKernel3/
-            sha256sum AnyKernel3/$KIMG $BASE $Q/dtbo.img 2>/dev/null | tee AnyKernel3/SHA256SUMS.txt || true
-            echo "### 内核段尾部 dtb 一致性校验通过 ($DTBSZ B, $A)"
+
+            if ! grep -qE '^[[:space:]]*struct timespec ts;' "$EV"; then echo "[ERROR] KSU event.c timespec 条件化未生效"; exit 1; fi
+
+            echo "[KSU] event.c ts 声明已按内核版本条件化"
+
           fi
+
+          # --- KSU-Next legacy patch_memory.c：内核若未真正提供 probe_kernel_write（注释提及不算），
+
+          #     需移除 <5.8 兼容映射，否则 vmlinux 报 undefined symbol: probe_kernel_write ---
+
+          PM=drivers/kernelsu/hook/patch_memory.c
+
+          if [ -f "$PM" ] && grep -q 'probe_kernel_write' "$PM"; then
+
+            if grep -qE '(EXPORT_SYMBOL(_GPL)?[(]probe_kernel_write[)]|^[A-Za-z_].*probe_kernel_write[[:space:]]*[(])' mm/maccess.c 2>/dev/null; then
+
+              echo "[KSU] 内核提供 probe_kernel_write，保留 legacy 映射"
+
+            else
+
+              sed -i '/^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$/,/^#endif$/c\/* 本内核已 backport 5.8 nofault API：直接使用 copy_to_kernel_nofault */' "$PM"
+
+              if grep -qE '^[[:space:]]*probe_kernel_write[(]' "$PM"; then echo "[ERROR] patch_memory.c 兼容修复未生效"; exit 1; fi
+
+              echo "[KSU] 已移除 patch_memory.c 中 probe_kernel_write 映射"
+
+            fi
+
+          fi
+
+          echo "=== 兼容修复已应用 ==="
+
+
+
+      - name: 设置 ccache 缓存
+
+        if: env.USE_CCACHE == 'true'
+
+        uses: hendrikmuhs/ccache-action@v1.2
+
+        with:
+
+          key: ${{ env.CCACHE_KEY }}
+
+          max-size: 2G
+
+
+
+      - name: "[9.5/11] 集成 KSU-Next legacy manual hook 入口 (4.14 reboot)"
+
+        run: |
+
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+          if grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
+
+            echo "[OK] kernel/reboot.c 已存在 ksu_handle_sys_reboot"
+
+          else
+
+            cat > /tmp/ksu_reboot_hook.txt <<'EOF'
+
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+
+          	extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
+
+          	if (ksu_handle_sys_reboot(magic1, magic2, cmd, &arg))
+
+          		return 0;
+
+          #endif
+
+          EOF
+
+            S=$(awk '/^SYSCALL_DEFINE4[(]reboot,/{print NR; exit}' kernel/reboot.c)
+
+            M=$(awk -v s="$S" 'NR>s && /^[{]/{print NR; exit}' kernel/reboot.c)
+
+            echo "[i] SYSCALL_DEFINE4(reboot) 函数体起始行: $M"
+
+            if [ -z "$M" ]; then echo "### 未定位 reboot 函数体，manual hook 无法集成"; exit 1; fi
+
+            N=$(awk -v s="$M" 'NR>s && /^[[:space:]]*$/{print NR; exit}' kernel/reboot.c)
+
+            N=${N:-$((M+1))}
+
+            echo "[i] 插入锚点(首个空行)行号: $N"
+
+            sed -i "$((N-1))r /tmp/ksu_reboot_hook.txt" kernel/reboot.c
+
+            echo "[OK] 已插入 ksu_handle_sys_reboot 调用点"
+
+          fi
+
+          grep -q "ksu_handle_sys_reboot" kernel/reboot.c || { echo "### manual hook 集成校验失败"; exit 1; }
+
+          sed -n '/SYSCALL_DEFINE4(reboot,/,/^}/p' kernel/reboot.c | head -22
+
+
+
+      - name: "[10/11] 编译内核"
+
+        run: |
+
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+
+          export KBUILD_BUILD_HOST=17
+
+          export KBUILD_BUILD_USER=HyperPower
+
+          # 编译期降级 -Wincompatible-function-pointer-types（clang-r450784d 对 io-pgtable-arm-v7s 的类型噪音）
+
+          export KCFLAGS="-Wno-incompatible-function-pointer-types"
+
+          if [ "${{ env.USE_CCACHE }}" = "true" ]; then
+
+            export CC_WRAP="ccache clang"
+
+          else
+
+            export CC_WRAP="clang"
+
+          fi
+
+          START=$(date +%s)
+
+          make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+
+          LOG=build_full.log
+
+          set +e
+
+          if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
+
+            make -j$(nproc --all) CC="$CC_WRAP" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1 > $LOG 2>&1
+
+          else
+
+            make -j$(nproc --all) CC="$CC_WRAP" O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" > $LOG 2>&1
+
+          fi
+
+          RC=$?
+
+          set -e
+
+          END=$(date +%s)
+
+          echo "编译退出码: $RC | 编译耗时: $((END-START)) 秒"
+
+          echo "########## 编译错误汇总（去重） ##########"
+
+          grep -nE "error:|fatal error:|Error [0-9]+|\*\*\* " $LOG | sort -u | head -60 || true
+
+          if [ "$RC" -ne 0 ]; then
+
+            echo "########## make 失败，日志尾部 150 行 ##########"
+
+            tail -n 150 $LOG
+
+            cp -f $LOG out/build_failed.log 2>/dev/null || true
+
+            exit 1
+
+          fi
+
+          if [ ! -f out/arch/arm64/boot/Image.gz ]; then
+
+            echo "########## 未生成 Image.gz，日志尾部 150 行 ##########"
+
+            tail -n 150 $LOG
+
+            cp -f $LOG out/build_failed.log 2>/dev/null || true
+
+            exit 1
+
+          fi
+
+          echo "| 编译耗时 | $((END-START)) 秒 |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ env.USE_CCACHE }}" = "true" ]; then
+
+            ccache -s || true
+
+          fi
+
+
+
+      - name: 编译结果核查 (4.14 基线)
+
+        if: always()
+
+        run: |
+
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+          ls -l out/arch/arm64/boot/ 2>/dev/null || true
+
+          if [ -f out/.config ]; then
+
+            echo "===== 关键配置 (4.14 开机基线) ====="
+
+            for k in CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_BUILD_ARM64_DT_OVERLAY CONFIG_MODULES CONFIG_KPROBES CONFIG_KSU CONFIG_KSU_MANUAL_HOOK; do
+
+              printf "%-38s %s\n" "$k" "$(grep -E "^${k}=" out/.config || echo '未启用/未设置')"
+
+            done
+
+          fi
+
+          echo "===== 关键驱动符号落地核查 (GENI / 批次2 驱动) ====="
+
+          for k in CONFIG_QCOM_GENI_SE CONFIG_I2C_QCOM_GENI CONFIG_SPI_QCOM_GENI CONFIG_SERIAL_MSM_GENI CONFIG_DSI_PARSER CONFIG_SDCARD_FS CONFIG_MIHW CONFIG_MILLET CONFIG_IRQ_SBALANCE CONFIG_HWCONF_MANAGER CONFIG_CJSON; do
+
+            printf "  %-42s %s\n" "$k" "$(grep -E "^${k}=" out/.config | head -1)"
+
+          done
+
+          echo "===== 批次1 差集配置落地核查 (out/.config) ====="
+          DROPPED=0; TOTAL=0
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            TOTAL=$((TOTAL+1))
+            if grep -qF "$line" out/.config; then :; else echo "  [DROPPED] $line"; DROPPED=$((DROPPED+1)); fi
+          done < $GITHUB_WORKSPACE/configs/raphael_stock_delta.config
+          echo "  ---- 差集清单 $TOTAL 项，未落地(被Kconfig丢弃) $DROPPED 项 ----"
+          cp -f out/.config out/config.used 2>/dev/null || true
+
+          cp -f arch/arm64/configs/${{ env.KERNEL_CONFIG }} out/defconfig.used 2>/dev/null || true
+
+
+
+      - name: 开机基线硬断言 (4.14)
+
+        run: |
+
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+          FAIL=0
+
+          for k in CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_BUILD_ARM64_DT_OVERLAY; do
+
+            if grep -qE "^${k}=y$" out/.config; then echo "  [OK ] $k"; else echo "  [MISS] $k"; FAIL=$((FAIL+1)); fi
+
+          done
+
+          if [ "${{ env.ENABLE_KERNELSU }}" = "true" ]; then
+
+            for k in CONFIG_MODULES CONFIG_KPROBES CONFIG_KSU CONFIG_KSU_MANUAL_HOOK; do
+
+              if grep -qE "^${k}=y$" out/.config; then echo "  [OK ] $k"; else echo "  [MISS] $k"; FAIL=$((FAIL+1)); fi
+
+            done
+
+            grep -rq 'kernelsu' drivers/Makefile 2>/dev/null || { echo "  [MISS] drivers/Makefile 未接入 kernelsu"; FAIL=$((FAIL+1)); }
+
+          fi
+
+          if [ "$FAIL" -ne 0 ]; then echo "### 开机基线自检失败：$FAIL 项异常，禁止出包"; exit 1; fi
+
+          echo "### 开机基线自检通过"
+
+
+
+      - name: "[11/11] 构建 dtb/dtbo.img (sm8150-v2 为 base；OS4 适配模式自动跳过)"
+
+        if: github.event.inputs.os4_adapt != 'true'
+
+        run: |
+
+          set -e
+
+          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r450784d/bin:$PATH
+
+          if [ "${{ env.USE_CCACHE }}" = "true" ]; then export CC_WRAP="ccache clang"; else export CC_WRAP="clang"; fi
+
+          if [ "${LLVM_CONFIG}" = "y" ]; then
+
+            make -j$(nproc --all) O=out ARCH=arm64 CC="$CC_WRAP" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 dtbs || true
+
+          else
+
+            make -j$(nproc --all) O=out ARCH=arm64 CC="$CC_WRAP" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- dtbs || true
+
+          fi
+
+          Q=out/arch/arm64/boot/dts/qcom
+
+          ls -l $Q/sm8150-v2.dtb $Q/raphael-sm8150-overlay.dtbo $Q/dtbo.img 2>/dev/null || true
+
+          [ -f $Q/sm8150-v2.dtb ] || { echo "### 缺少 sm8150-v2.dtb，构建失败"; exit 1; }
+
+          [ -f $Q/raphael-sm8150-overlay.dtbo ] || { echo "### 缺少 raphael-sm8150-overlay.dtbo，构建失败"; exit 1; }
+
+          if [ ! -f $Q/dtbo.img ]; then
+
+            python3 scripts/mkdtboimg.py create $Q/dtbo.img --page_size=4096 $Q/raphael-sm8150-overlay.dtbo
+
+          fi
+
+          ls -l $Q/dtbo.img
+
+
+
+      - name: 打包 AnyKernel3 (OS4 适配=仅 kernel+ROM原dtb；默认=sm8150-v2 dtb+dtbo)
+
+        run: |
+
+          cd $GITHUB_WORKSPACE/kernel_workspace
+
+          git clone https://github.com/osm0sis/AnyKernel3
+
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+
+          sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+
+          sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+
+          Q=android-kernel/out/arch/arm64/boot/dts/qcom
+
+          KIMG=${KERNEL_IMAGE_NAME:-Image.gz-dtb}
+
+          rm -f AnyKernel3/dtb
+
+          if [ "${OS4_ADAPT:-false}" = "true" ]; then
+
+            echo "########## OS4 适配打包：kernel + ROM 原 dtb，不打包/不刷 dtbo ##########"
+
+            ROM_DIR=$GITHUB_WORKSPACE/os4
+
+            ROM_DTB=$ROM_DIR/raphael_kameyuki_os4_rom.dtb
+
+            [ -s "$ROM_DTB" ] || { echo "### 缺少 ROM 原 dtb ($ROM_DTB)，禁止出包"; exit 1; }
+
+            [ -s "$ROM_DIR/anykernel-os4.sh" ] || { echo "### 缺少 anykernel-os4.sh，禁止出包"; exit 1; }
+
+            KSRC=android-kernel/out/arch/arm64/boot/Image.gz
+
+            [ -s "$KSRC" ] || { echo "### 缺少 Image.gz，禁止出包"; exit 1; }
+
+            cp "$KSRC" AnyKernel3/Image.gz
+
+            cat AnyKernel3/Image.gz "$ROM_DTB" > AnyKernel3/$KIMG
+
+            rm -f AnyKernel3/Image.gz
+
+            DTBSZ=$(stat -c%s "$ROM_DTB")
+
+            A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
+
+            B=$(sha256sum "$ROM_DTB" | cut -d' ' -f1)
+
+            [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与 ROM 原 dtb 不一致，禁止出包"; exit 1; }
+
+            cp -f "$ROM_DIR/anykernel-os4.sh" AnyKernel3/anykernel.sh
+
+            sed -i 's|^\([[:space:]]*\)flash_generic dtbo;|\1# flash_generic dtbo; # OS4 adapt: dtbo 分区保持 ROM 原样|' AnyKernel3/tools/ak3-core.sh
+
+            grep -qE '^[[:space:]]*# flash_generic dtbo;' AnyKernel3/tools/ak3-core.sh || { echo "### ak3-core.sh 中 flash_generic dtbo 未成功注释，禁止出包"; exit 1; }
+
+            grep -q '^flash_boot;' AnyKernel3/anykernel.sh || { echo "### anykernel.sh 未切换到 flash_boot，禁止出包"; exit 1; }
+
+            if [ -f AnyKernel3/dtbo.img ]; then echo "### OS4 模式禁止打包 dtbo.img"; exit 1; fi
+
+            ls -l AnyKernel3/
+
+            sha256sum AnyKernel3/$KIMG "$ROM_DTB" | tee AnyKernel3/SHA256SUMS.txt
+
+            echo "### OS4 适配打包校验通过：kernel + ROM dtb ($DTBSZ B, $A)，未打包 dtbo"
+
+          else
+
+            BASE=$Q/sm8150-v2.dtb
+
+            [ -f "$BASE" ] || { echo "### 缺少 sm8150-v2.dtb，禁止出包"; exit 1; }
+
+            if [ -f android-kernel/out/arch/arm64/boot/Image.gz ]; then
+
+              SRC=android-kernel/out/arch/arm64/boot/Image.gz
+
+            else
+
+              SRC=android-kernel/out/arch/arm64/boot/$KIMG
+
+            fi
+
+            cp "$SRC" AnyKernel3/$KIMG
+
+            DTBSZ=$(stat -c%s "$BASE")
+
+            if [ "$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)" != "$(sha256sum $BASE | cut -d' ' -f1)" ]; then
+
+              echo ">>> 内核镜像尾部 dtb 与 sm8150-v2.dtb 不一致，执行拼装对齐"
+
+              cat AnyKernel3/$KIMG "$BASE" > AnyKernel3/.kimg.tmp
+
+              mv -f AnyKernel3/.kimg.tmp AnyKernel3/$KIMG
+
+            fi
+
+            rm -f AnyKernel3/dtb
+
+            if [ "${NEED_DTBO:-false}" = "true" ]; then
+
+              [ -s $Q/dtbo.img ] || { echo "### dtbo.img 缺失，禁止出包"; exit 1; }
+
+              cp $Q/dtbo.img AnyKernel3/dtbo.img
+
+            fi
+
+            A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
+
+            B=$(sha256sum $BASE | cut -d' ' -f1)
+
+            [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与自编译 dtb 不一致，禁止出包"; exit 1; }
+
+            ls -l AnyKernel3/
+
+            sha256sum AnyKernel3/$KIMG $BASE $Q/dtbo.img 2>/dev/null | tee AnyKernel3/SHA256SUMS.txt || true
+
+            echo "### 内核段尾部 dtb 一致性校验通过 ($DTBSZ B, $A)"
+
+          fi
+
           rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
 
+
+
       - name: 上传卡刷包工件
+
         uses: actions/upload-artifact@v4
+
         with:
+
           name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.os4_adapt == 'true' && '-OS4' || '' }}${{ github.event.inputs.variant == 'revert_plan_c' && '-noplanC' || (github.event.inputs.variant == 'no_driver' && '-nodrv' || '') }}
+
           path: kernel_workspace/AnyKernel3/*
 
+
+
       - name: 上传配置与校验信息
+
         if: always()
+
         uses: actions/upload-artifact@v4
+
         with:
+
           name: ${{ env.KERNEL_ZIP_NAME }}-replica${{ github.event.inputs.os4_adapt == 'true' && '-OS4' || '' }}${{ github.event.inputs.variant == 'revert_plan_c' && '-noplanC' || (github.event.inputs.variant == 'no_driver' && '-nodrv' || '') }}-config
+
           path: |
+
             kernel_workspace/android-kernel/out/config.used
+
             kernel_workspace/android-kernel/out/defconfig.used
+
           if-no-files-found: warn
+

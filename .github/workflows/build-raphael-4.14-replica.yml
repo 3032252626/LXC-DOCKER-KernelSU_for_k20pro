@@ -470,7 +470,7 @@ jobs:
           CFG=android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           DELTA=$GITHUB_WORKSPACE/configs/raphael_stock_delta.config
           if [ ! -s "$DELTA" ]; then echo "### 缺少 configs/raphael_stock_delta.config，停止"; exit 1; fi
-          sed -i '/^CONFIG_HZ_300=y/d' "$CFG"
+          sed -i '/^CONFIG_HZ_[0-9]\+=y/d;/^# CONFIG_HZ_[0-9]\+ is not set/d' "$CFG"
           added=0; fixed=0; kept=0
           while IFS= read -r line; do
             [ -z "$line" ] && continue

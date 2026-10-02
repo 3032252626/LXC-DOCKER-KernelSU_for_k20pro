@@ -1,0 +1,248 @@
+name: Bool-X 4.14 [raphael] OS4 卡刷包
+
+# ============================================================================
+#   源码：onettboots/bool-x_xiaomi_raphael @ 16-HyperMiui-erofs（4.14.356，EROFS）
+#   工具链：Mandi-Sa clang19 静态（amd64-kernel-arm_static-19），与作者上游 build-kernel.yml 完全一致
+#   源码改动：无（保持树原样，不注入 LXC/KSU，KSU/SUSFS 由树内置 defconfig 提供）
+#   打包：Image.gz + ROM 原 dtb → Image.gz-dtb → AnyKernel3（os4/anykernel-os4.sh）
+#         仅替换 boot 分区的 kernel + dtb；不构建、不打包、不刷 dtbo
+#   目标：KameYuki HyperOS4 / OS4.0.0.16 (raphael / raphaelin) 开机验证
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_suffix:
+        description: '可选包名后缀（仅字母数字-_，例 -t1；留空不加）'
+        required: false
+        type: string
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - 'ci-triggers/boolx/**'
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+  KERNEL_REPO: https://github.com/onettboots/bool-x_xiaomi_raphael.git
+  KERNEL_BRANCH: 16-HyperMiui-erofs
+  DEFCONFIG: raphael_defconfig
+  CLANG_URL: https://github.com/Mandi-Sa/clang/releases/download/amd64-kernel-arm_static-19/llvm19.0.0-binutils2.42_amd64-kernel-arm_static-20240425.7z
+  ZIP_BASE: raphael_BoolX-4.14-OS4
+  ROM_DTB_REL: os4/raphael_kameyuki_os4_rom.dtb
+  AK3_SCRIPT_REL: os4/anykernel-os4.sh
+  SUFFIX: ${{ github.event.inputs.kernel_suffix }}
+
+jobs:
+  build:
+    name: Build Bool-X 4.14 + OS4 卡刷包
+    runs-on: ubuntu-22.04
+    if: github.event.repository.owner.id == github.event.sender.id
+    steps:
+      - name: "[1/10] 拉取工作流仓库"
+        uses: actions/checkout@v4
+
+      - name: "[2/10] 出包资源预检"
+        run: |
+          set -e
+          for f in "$ROM_DTB_REL" "$AK3_SCRIPT_REL"; do
+            [ -s "$f" ] || { echo "### 缺少 $f，禁止出包"; exit 1; }
+            echo "$f : $(stat -c%s "$f") B  sha256 $(sha256sum "$f" | cut -d' ' -f1)"
+          done
+          python3 -c "d=open('os4/raphael_kameyuki_os4_rom.dtb','rb').read(); i=d.rfind(b'\xd0\x0d\xfe\xed'); print('ROM dtb 尾部 FDT:', len(d)-i, 'B; magic ok:', d[i:i+4]==b'\xd0\x0d\xfe\xed', '总长:', len(d))"
+          grep -q '^flash_boot;' "$AK3_SCRIPT_REL" || { echo "### anykernel-os4.sh 未使用 flash_boot"; exit 1; }
+          grep -q '^split_boot;' "$AK3_SCRIPT_REL" || { echo "### anykernel-os4.sh 缺少 split_boot"; exit 1; }
+          {
+            echo "### Bool-X 4.14 OS4 构建"
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 源码 | onettboots/bool-x_xiaomi_raphael @ $KERNEL_BRANCH |"
+            echo "| defconfig | $DEFCONFIG |"
+            echo "| 工具链 | Mandi-Sa clang19 static（与作者配方一致） |"
+            echo "| 打包 | Image.gz + ROM 原 dtb（不刷 dtbo） |"
+            echo "| 运行 | #${{ github.run_number }} |"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: "[3/10] 安装编译依赖"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git gnupg gperf \
+            libncurses-dev libssl-dev libxml2-utils rsync cpio zlib1g-dev zip unzip p7zip-full \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          # runner 预装 libyaml-dev 会让 dtc 走 yaml 分支、并因 HOSTLDLIBS/HOSTLOADLIBES 变量名不匹配链接失败；
+          # 按作者配方卸载即可，不改内核源码
+          sudo apt-get remove -y libyaml-dev || true
+          mkdir -p $GITHUB_WORKSPACE/kw
+
+      - name: "[4/10] 下载 clang 工具链（Mandi-Sa static llvm19）"
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE/kw
+          wget -q "$CLANG_URL"
+          F=$(basename "$CLANG_URL")
+          7z x -y "$F" > /dev/null
+          rm -f "$F"
+          for d in $(find $GITHUB_WORKSPACE/kw -type d -name bin | sort -u); do
+            echo "toolchain bin: $d"
+            ls "$d" | head -5
+          done
+
+      - name: "[5/10] 检出内核源码（不改源码）"
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE/kw
+          git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+          cd kernel
+          git log -1 --oneline
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' Makefile
+          grep -n 'CONFIG_LOCALVERSION=' arch/arm64/configs/$DEFCONFIG || true
+
+      - name: "[6/10] 编译（Image.gz / dtbs / dtbo.img）"
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE/kw/kernel
+          for d in $(find $GITHUB_WORKSPACE/kw -type d -name bin | sort -u); do
+            export PATH="$d:$PATH"
+          done
+          # 删掉工具链自带 host 链接器，避免抢占系统 ld（作者配方）
+          for d in $(find $GITHUB_WORKSPACE/kw -type d -name bin | sort -u); do
+            rm -f "$d/ld" "$d/ld.bfd" "$d/ld.gold" "$d/collect2" 2>/dev/null || true
+          done
+          export ARCH=arm64 SUBARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld
+          clang --version | head -2
+          START=$(date +%s)
+          make O=out "$DEFCONFIG"
+          make -k -j"$(nproc)" O=out Image.gz dtbs > build_full.log 2>&1 || true
+          make -k -j"$(nproc)" O=out dtbo.img >> build_full.log 2>&1 || true
+          END=$(date +%s)
+          echo "编译耗时 $((END-START)) 秒"
+          echo "########## 编译错误汇总 ##########"
+          grep -E "error:|fatal error:" build_full.log | sort -u | head -40 || true
+          echo "########## 产物 ##########"
+          ls -l out/arch/arm64/boot/ 2>/dev/null || true
+          ls -l out/arch/arm64/boot/dts/qcom/dtbo.img out/arch/arm64/boot/dts/qcom/sm8150-v2.dtb 2>/dev/null || true
+          if [ ! -s out/arch/arm64/boot/Image.gz ]; then
+            echo "### 未生成 Image.gz，编译失败，日志尾部："
+            tail -n 80 build_full.log
+            exit 1
+          fi
+          {
+            echo ""
+            echo "### 编译阶段"
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 编译耗时 | $((END-START)) 秒 |"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: "[7/10] 收集产物"
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE/kw/kernel/out/arch/arm64/boot
+          mkdir -p $GITHUB_WORKSPACE/raw
+          cp -v Image.gz $GITHUB_WORKSPACE/raw/ 2>/dev/null || true
+          cp -v dts/qcom/dtbo.img $GITHUB_WORKSPACE/raw/ 2>/dev/null || true
+          find . -type f -name '*.dtb' -print0 | while IFS= read -r -d '' f; do
+            rel="${f#./}"
+            mkdir -p "$GITHUB_WORKSPACE/raw/dtbs/$(dirname "$rel")"
+            cp "$f" "$GITHUB_WORKSPACE/raw/dtbs/$rel"
+          done
+          echo "== raw 产出 =="
+          ls -l $GITHUB_WORKSPACE/raw/
+          find $GITHUB_WORKSPACE/raw/dtbs -name 'sm8150*.dtb' -o -name 'raphael*.dtb' | head -10
+          sha256sum $GITHUB_WORKSPACE/raw/Image.gz
+
+      - name: "[8/10] 打包 OS4 卡刷包（Image.gz + ROM 原 dtb，不刷 dtbo）"
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE
+          KSRC=kw/kernel/out/arch/arm64/boot/Image.gz
+          [ -s "$KSRC" ] || { echo "### 缺少编译产物 Image.gz"; exit 1; }
+          rm -rf AnyKernel3
+          git clone -q --depth=1 https://github.com/osm0sis/AnyKernel3
+          cp -f "$AK3_SCRIPT_REL" AnyKernel3/anykernel.sh
+          # 双保险：注释 ak3-core.sh 中的 flash_generic dtbo（dtbo 分区保持 ROM 原样）
+          sed -i 's|^\([[:space:]]*\)flash_generic dtbo;|\1# flash_generic dtbo; # OS4 adapt: dtbo 分区保持 ROM 原样|' AnyKernel3/tools/ak3-core.sh
+          grep -qE '^[[:space:]]*# flash_generic dtbo;' AnyKernel3/tools/ak3-core.sh || { echo "### ak3-core.sh 中 flash_generic dtbo 未成功注释，禁止出包"; exit 1; }
+          grep -q '^flash_boot;' AnyKernel3/anykernel.sh || { echo "### anykernel.sh 未切换到 flash_boot"; exit 1; }
+          grep -q '^split_boot;' AnyKernel3/anykernel.sh || { echo "### anykernel.sh 缺少 split_boot"; exit 1; }
+          rm -f AnyKernel3/dtb AnyKernel3/dtbo.img AnyKernel3/Image.gz AnyKernel3/Image.gz-dtb
+          cat "$KSRC" "$ROM_DTB_REL" > AnyKernel3/Image.gz-dtb
+          DTBSZ=$(stat -c%s "$ROM_DTB_REL")
+          A=$(tail -c $DTBSZ AnyKernel3/Image.gz-dtb | sha256sum | cut -d' ' -f1)
+          B=$(sha256sum "$ROM_DTB_REL" | cut -d' ' -f1)
+          [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与 ROM 原 dtb 不一致，禁止出包"; exit 1; }
+          [ -f AnyKernel3/dtbo.img ] && { echo "### OS4 模式禁止打包 dtbo.img"; exit 1; }
+          rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+          sha256sum AnyKernel3/Image.gz-dtb "$ROM_DTB_REL" > AnyKernel3/SHA256SUMS.txt
+          ZIP="${ZIP_BASE}${SUFFIX}.zip"
+          ( cd AnyKernel3 && zip -r9 "$ZIP" . -x '.*' > /dev/null )
+          mv -f "AnyKernel3/$ZIP" "$GITHUB_WORKSPACE/$ZIP"
+          unzip -l "$GITHUB_WORKSPACE/$ZIP" | head -20
+          sha256sum "$GITHUB_WORKSPACE/$ZIP" | tee "$GITHUB_WORKSPACE/$ZIP.sha256"
+          {
+            echo ""
+            echo "### 卡刷包"
+            echo "- 文件：\`$ZIP\`"
+            echo "- 内核段：Image.gz $(stat -c%s "$KSRC") B"
+            echo "- 追加 dtb：ROM 原 dtb $DTBSZ B（sha256 $A）"
+            echo "- dtbo：未打包、不修改 dtbo 分区"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: "[9/10] 上传产物"
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_BASE }}${{ github.event.inputs.kernel_suffix }}
+          path: |
+            ${{ env.ZIP_BASE }}*.zip
+            ${{ env.ZIP_BASE }}*.zip.sha256
+          if-no-files-found: error
+
+      - name: "[9b/10] 上传原始编译产物（Image.gz / dtbs / dtbo.img）"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_BASE }}${{ github.event.inputs.kernel_suffix }}-raw
+          path: |
+            raw/Image.gz
+            raw/dtbo.img
+            raw/dtbs/**
+          if-no-files-found: warn
+
+      - name: "[9c/10] 上传编译日志"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_BASE }}${{ github.event.inputs.kernel_suffix }}-logs
+          path: kw/kernel/build_full.log
+          if-no-files-found: warn
+
+      - name: "[10/10] 发布到 Release"
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: os4-boolx-${{ github.run_number }}
+          name: OS4 开机测试 · Bool-X 4.14（#${{ github.run_number }}）
+          body: |
+            Bool-X 4.14.356 @ 16-HyperMiui-erofs（EROFS，含内置 KSU/SUSFS），工具链 Mandi-Sa clang19 static。
+            卡刷包：Image.gz 尾部追加 ROM 原 dtb（446802 B），AnyKernel3 仅替换 boot 分区 kernel+dtb，不修改 dtbo。
+            源码零改动（不含 LXC/Docker 注入）。
+          files: |
+            ${{ env.ZIP_BASE }}*.zip
+            ${{ env.ZIP_BASE }}*.zip.sha256
+          draft: false
+          prerelease: false
+      - name: "[补充] 构建汇总"
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "---"
+            echo "### 汇总"
+            echo "- 结果：${{ job.status }}"
+            echo "- 运行：[${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } >> $GITHUB_STEP_SUMMARY

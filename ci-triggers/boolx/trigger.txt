@@ -1,0 +1,7 @@
+# 触发文件：改动本文件即触发一次 Bool-X 4.14 OS4 卡刷包构建
+# 工作流：.github/workflows/build-boolx-4.14-os4.yml
+触发原因: OS4（KameYuki HyperOS4 / OS4.0.0.16, raphael/raphaelin）开机验证 —— Bool-X 4.14.356 卡刷包
+源码: onettboots/bool-x_xiaomi_raphael @ 16-HyperMiui-erofs
+工具链: Mandi-Sa clang19 static（与作者上游配方一致）
+打包: Image.gz + ROM 原 dtb（446802 B）→ AnyKernel3，仅替换 boot，不动 dtbo
+触发日期: 2026-10-03

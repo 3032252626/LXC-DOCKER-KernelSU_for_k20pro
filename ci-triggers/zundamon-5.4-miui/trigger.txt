@@ -1,0 +1,6 @@
+# 触发文件：改动本文件即触发一次 Zundamon 5.4-miui 内核构建
+# 工作流：.github/workflows/build-zundamon-5.4-lxc.yml（push 触发走 config.env 默认参数：LXC 容器版 + KernelSU-Next legacy + dtb/dtbo 出包 + ccache）
+触发原因: OS4（KameYuki HyperOS4 / OS4.0.0.16, raphael/raphaelin）开机验证 —— Zundamon 5.4-miui 卡刷包
+源码: 3032252626/kernel_xiaomi_raphael-5.4 @ zundamon-miui-5.4
+打包: Image.gz + 自编译 sm8150-v2.dtb（尾部 append）+ dtbo.img，AnyKernel3 一次卡刷
+触发日期: 2026-10-03

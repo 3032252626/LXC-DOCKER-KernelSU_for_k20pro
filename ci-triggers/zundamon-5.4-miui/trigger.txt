@@ -4,3 +4,4 @@
 源码: 3032252626/kernel_xiaomi_raphael-5.4 @ zundamon-miui-5.4
 打包: Image.gz + 自编译 sm8150-v2.dtb（尾部 append）+ dtbo.img，AnyKernel3 一次卡刷
 触发日期: 2026-10-03
+重推(01:2x): 修复 [2/21] 汇总步骤 `set -a; . $GITHUB_ENV` 把 "CC_CMD=ccache clang" 当命令执行导致 command not found 的致命失败（首次 push 触发 #15 即挂在该步），改为逐行读取导出

@@ -1,0 +1,265 @@
+name: "4.14 作者复刻构建 [LOS23.2 + exact config + clang22]"
+
+# ============================================================================
+# 方案1：纯净复现作者（kmerc224）发布的可开机 4.14 内核 Zundamon-Evo-v20261001-1
+#   源码  : LineageOS/android_kernel_xiaomi_sm8150 @ lineage-23.2
+#   配置  : 作者发布内核内嵌 IKCONFIG 逐项复制的 exact config
+#           configs/raphael_exact_kernel_config.txt（164726B / 6155 行）
+#           + 追加 CONFIG_MACH_XIAOMI_RAPHAEL=y（选中 raphael 板级 → MACH_XIAOMI_SM8150）
+#   工具链: Mandi-Sa clang 22 静态包
+#           llvm22.0.0-binutils2.45.1_amd64-kernel-arm_static-20260111
+#           （对应作者内核字符串里的 Android clang 22.0.2 / LLD 22.0.2）
+#   产物  : 裸 Image.gz → 尾部追加 ROM 原 dtb → Image.gz-dtb → OS4 卡刷包
+#           （复用 os4/anykernel-os4.sh：仅 split_boot + flash_boot，不打包/不刷 dtbo）
+#   纯净性: 不注入 LXC/Docker、不注入 KernelSU-Next、不做方案C 回退/变体、
+#           不改 LOCALVERSION —— 先证明“同源 + 同配置 + 同工具链”能出可开机内核
+# ============================================================================
+
+env:
+  TZ: Asia/Shanghai
+  KERNEL_SOURCE: LineageOS/android_kernel_xiaomi_sm8150
+  KERNEL_SOURCE_BRANCH: lineage-23.2
+  EXACT_CONFIG: configs/raphael_exact_kernel_config.txt
+  EXACT_CONFIG_SHA256: 82db46c12791dfdeeb6a8cb2217b92266c4a68435d1a61afa969e7133160259a
+  CLANG_CACHE_KEY: clang22-MandiSa-amd64-kernel-arm_static-20260111
+  CLANG_URL: https://github.com/Mandi-Sa/clang/releases/download/amd64-kernel-arm_static-22/llvm22.0.0-binutils2.45.1_amd64-kernel-arm_static-20260111.7z
+  TC_DIR: /tmp/tc
+  ROM_DTB_REL: os4/raphael_kameyuki_os4_rom.dtb
+  AK3_SCRIPT_REL: os4/anykernel-os4.sh
+  KERNEL_ZIP_NAME: Zundamon-4.14-author-replica-OS4
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: raphael-4.14-author-replica-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 4.14 author-replica build
+    runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
+    steps:
+      - name: 检出本仓库（config 与 os4 打包资源）
+        uses: actions/checkout@v4
+        with:
+          path: buildrepo
+
+      - name: "[1/9] 参数与素材自检"
+        run: |
+          echo "BUILDREPO=$GITHUB_WORKSPACE/buildrepo" >> $GITHUB_ENV
+          echo "KERNEL_DIR=$GITHUB_WORKSPACE/kernel" >> $GITHUB_ENV
+          echo "ZIP_NAME=${KERNEL_ZIP_NAME}-${GITHUB_SHA::7}" >> $GITHUB_ENV
+          set -e
+          CFG=$GITHUB_WORKSPACE/buildrepo/$EXACT_CONFIG
+          DTB=$GITHUB_WORKSPACE/buildrepo/$ROM_DTB_REL
+          AK3=$GITHUB_WORKSPACE/buildrepo/$AK3_SCRIPT_REL
+          for f in "$CFG" "$DTB" "$AK3"; do
+            [ -s "$f" ] || { echo "### 素材缺失: $f"; exit 1; }
+          done
+          CSHA=$(sha256sum "$CFG" | cut -d' ' -f1)
+          echo "exact config : $(stat -c%s "$CFG") B, sha256 $CSHA"
+          [ "$CSHA" = "$EXACT_CONFIG_SHA256" ] || { echo "### exact config 校验失败（期望 $EXACT_CONFIG_SHA256）"; exit 1; }
+          echo "ROM 原 dtb   : $(stat -c%s "$DTB") B, sha256 $(sha256sum "$DTB" | cut -d' ' -f1)"
+          echo "AK3 OS4 脚本 : $AK3"
+          echo "### 4.14 作者复刻构建（方案1：纯净复现）" >> $GITHUB_STEP_SUMMARY
+          echo "| 项 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| 内核源 | $KERNEL_SOURCE |" >> $GITHUB_STEP_SUMMARY
+          echo "| 分支 | $KERNEL_SOURCE_BRANCH |" >> $GITHUB_STEP_SUMMARY
+          echo "| 配置 | 作者 exact config + MACH_XIAOMI_RAPHAEL=y |" >> $GITHUB_STEP_SUMMARY
+          echo "| 工具链 | Mandi-Sa clang 22 (静态) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 产物 | Image.gz → +ROM 原 dtb → OS4 卡刷包 |" >> $GITHUB_STEP_SUMMARY
+          echo "| 注入 | 无（不含 LXC/Docker、KernelSU） |" >> $GITHUB_STEP_SUMMARY
+
+      - name: "[2/9] 安装构建依赖"
+        run: |
+          sudo apt-get update
+          sudo -E apt-get -y -qq install git make bc bison flex libssl-dev libelf-dev \
+            p7zip-full zip curl ca-certificates python3 device-tree-compiler
+          df -h / | tail -1
+
+      - name: "[3/9] 恢复 clang22 工具链缓存"
+        id: tc-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/tc
+          key: ${{ env.CLANG_CACHE_KEY }}
+
+      - name: "[4/9] 下载 clang22 工具链（缓存未命中时）"
+        if: steps.tc-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 20
+        run: |
+          set -e
+          cd /tmp
+          curl -sSL --retry 3 -o tc.7z "$CLANG_URL"
+          ls -lh tc.7z
+          7z x -y tc.7z -o/tmp/tc > /dev/null
+          ls /tmp/tc | head
+
+      - name: "[5/9] 工具链校验（clang22 + 静态 binutils）"
+        run: |
+          set -e
+          export PATH=$TC_DIR/bin:$TC_DIR/aarch64-linux-gnu/bin:$TC_DIR/arm-linux-gnueabi/bin:$PATH
+          clang --version | head -2
+          ld.lld --version | head -1
+          aarch64-linux-gnu-as --version | head -1
+          CVER=$(clang --version | head -1 | grep -oE 'clang version [0-9]+' | grep -oE '[0-9]+$')
+          echo "clang major = $CVER（作者为 22）"
+          if [ "$CVER" != "22" ]; then echo "### 警告：clang 主版本与作者（22）不一致，复刻结果仅供参考"; fi
+
+      - name: "[6/9] 拉取 LOS lineage-23.2 内核源码"
+        uses: actions/checkout@v4
+        with:
+          repository: LineageOS/android_kernel_xiaomi_sm8150
+          ref: lineage-23.2
+          path: kernel
+
+      - name: "[7/9] 导入作者 exact config（+MACH_XIAOMI_RAPHAEL=y + olddefconfig）"
+        run: |
+          set -e
+          cd $KERNEL_DIR
+          export PATH=$TC_DIR/bin:$TC_DIR/aarch64-linux-gnu/bin:$TC_DIR/arm-linux-gnueabi/bin:$PATH
+          SRC=$BUILDREPO/$EXACT_CONFIG
+          mkdir -p out
+          cp -f "$SRC" out/.config
+          echo "CONFIG_MACH_XIAOMI_RAPHAEL=y" >> out/.config
+          echo "导入行数: $(grep -c . out/.config)"
+          make -s O=out ARCH=arm64 CC=clang HOSTCC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- olddefconfig 2>&1 | tail -20
+          echo "===== 关键配置（作者复刻基线） ====="
+          for k in CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_MACH_XIAOMI_SM8150 \
+                   CONFIG_BUILD_ARM64_DT_OVERLAY CONFIG_MODULES CONFIG_KPROBES CONFIG_LTO_NONE CONFIG_IKCONFIG; do
+            printf "%-36s %s\n" "$k" "$(grep -E "^${k}[= ]" out/.config || echo '未启用/该树不含此项')"
+          done
+          echo "===== 纯净性检查（不应出现 KSU/LXC 注入项） ====="
+          if grep -qE '^CONFIG_KSU|^CONFIG_KSU_MANUAL_HOOK|^CONFIG_LXC' out/.config; then
+            echo "### 检测到 KSU/LXC 注入项，与本工作流‘纯净复现’目标冲突"; exit 1
+          fi
+          echo "OK：未注入 KernelSU / LXC"
+          echo "===== 与作者 exact config 的差异统计 ====="
+          grep -vE '^[[:space:]]*$' "$SRC" | sort -u > /tmp/author_cfg.txt
+          sort -u out/.config > /tmp/used_cfg.txt
+          echo "作者 config 项数 : $(wc -l < /tmp/author_cfg.txt)"
+          echo "生效 config 项数 : $(wc -l < /tmp/used_cfg.txt)"
+          echo "olddefconfig 丢弃（该树不存在/依赖不满足）: $(comm -23 /tmp/author_cfg.txt /tmp/used_cfg.txt | wc -l)"
+          echo "olddefconfig 新增: $(comm -13 /tmp/author_cfg.txt /tmp/used_cfg.txt | wc -l)"
+          echo "--- 丢弃项前 40 条 ---"
+          comm -23 /tmp/author_cfg.txt /tmp/used_cfg.txt | head -40 || true
+          echo "===== 开机关键项硬断言 ====="
+          FAIL=0
+          for k in CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL; do
+            if grep -qE "^${k}=y$" out/.config; then echo "  [OK ] $k"; else echo "  [MISS] $k"; FAIL=$((FAIL+1)); fi
+          done
+          if [ "$FAIL" -ne 0 ]; then
+            echo "### 关键项缺失，禁止继续编译"
+            grep -rn 'MACH_XIAOMI_RAPHAEL' arch/arm64/Kconfig* arch/arm64/configs/ 2>/dev/null | head -10 || true
+            exit 1
+          fi
+          cp -f out/.config out/config.used
+
+      - name: "[8/9] 编译裸 Image.gz（作者配方）"
+        run: |
+          cd $KERNEL_DIR
+          export PATH=$TC_DIR/bin:$TC_DIR/aarch64-linux-gnu/bin:$TC_DIR/arm-linux-gnueabi/bin:$PATH
+          export ARCH=arm64
+          # 作者做法：CC/LD 等以命令行变量传入（内核 Makefile 的 CC = $(CROSS_COMPILE)gcc 会覆盖 export）
+          START=$(date +%s)
+          set +e
+          make O=out ARCH=arm64 \
+            CC=clang HOSTCC=clang \
+            LD=ld.lld AR=llvm-ar NM=llvm-nm \
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            -j$(nproc --all) Image.gz \
+            KCFLAGS="-Wno-error" > build.log 2>&1
+          RC=$?
+          set -e
+          END=$(date +%s)
+          echo "编译退出码: $RC | 耗时: $((END-START)) 秒"
+          echo "| 编译耗时 | $((END-START)) 秒 |" >> $GITHUB_STEP_SUMMARY
+          if [ "$RC" -ne 0 ]; then
+            echo "########## 编译错误汇总（去重） ##########"
+            grep -nE "error:|fatal error:|Error [0-9]+|undefined reference|\*\*\* " build.log | sort -u | head -60 || true
+            echo "########## 日志尾部 180 行 ##########"
+            tail -n 180 build.log
+            cp -f build.log out/build_failed.log || true
+            exit 1
+          fi
+          tail -n 8 build.log
+          if [ ! -f out/arch/arm64/boot/Image.gz ]; then
+            echo "### 未生成 Image.gz，日志尾部 180 行"; tail -n 180 build.log; exit 1
+          fi
+          ls -l out/arch/arm64/boot/Image out/arch/arm64/boot/Image.gz
+          sha256sum out/arch/arm64/boot/Image.gz | tee out/Image.gz.sha256
+          strings out/arch/arm64/boot/Image | grep -m1 "Linux version" || true
+
+      - name: 编译结果核查
+        if: always()
+        run: |
+          cd $KERNEL_DIR 2>/dev/null || exit 0
+          ls -l out/arch/arm64/boot/ 2>/dev/null || true
+          cp -f out/.config out/config.used 2>/dev/null || true
+          { echo "### 编译产物"; echo '```'; ls -l out/arch/arm64/boot/ 2>/dev/null || true; echo '```'; } >> $GITHUB_STEP_SUMMARY
+
+      - name: "[9/9] 打包 OS4 卡刷包（kernel + ROM 原 dtb，不打包/不刷 dtbo）"
+        run: |
+          set -e
+          mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+          cd $GITHUB_WORKSPACE/kernel_workspace
+          rm -rf AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+          sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+          sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+          ROM_DIR=$BUILDREPO/os4
+          ROM_DTB=$BUILDREPO/$ROM_DTB_REL
+          KSRC=$KERNEL_DIR/out/arch/arm64/boot/Image.gz
+          [ -s "$ROM_DTB" ] || { echo "### 缺少 ROM 原 dtb，禁止出包"; exit 1; }
+          [ -s "$BUILDREPO/$AK3_SCRIPT_REL" ] || { echo "### 缺少 anykernel-os4.sh，禁止出包"; exit 1; }
+          [ -s "$KSRC" ] || { echo "### 缺少 Image.gz，禁止出包"; exit 1; }
+          rm -f AnyKernel3/dtb AnyKernel3/dtbo.img AnyKernel3/Image.gz AnyKernel3/Image.gz-dtb
+          cp "$KSRC" AnyKernel3/Image.gz
+          cat AnyKernel3/Image.gz "$ROM_DTB" > AnyKernel3/Image.gz-dtb
+          rm -f AnyKernel3/Image.gz
+          DTBSZ=$(stat -c%s "$ROM_DTB")
+          A=$(tail -c $DTBSZ AnyKernel3/Image.gz-dtb | sha256sum | cut -d' ' -f1)
+          B=$(sha256sum "$ROM_DTB" | cut -d' ' -f1)
+          [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与 ROM 原 dtb 不一致，禁止出包"; exit 1; }
+          cp -f "$BUILDREPO/$AK3_SCRIPT_REL" AnyKernel3/anykernel.sh
+          sed -i 's|^\([[:space:]]*\)flash_generic dtbo;|\1# flash_generic dtbo; # OS4 adapt: dtbo 分区保持 ROM 原样|' AnyKernel3/tools/ak3-core.sh
+          grep -qE '^[[:space:]]*# flash_generic dtbo;' AnyKernel3/tools/ak3-core.sh || { echo "### ak3-core.sh 中 flash_generic dtbo 未成功注释，禁止出包"; exit 1; }
+          grep -q '^flash_boot;' AnyKernel3/anykernel.sh || { echo "### anykernel.sh 未切换到 flash_boot，禁止出包"; exit 1; }
+          grep -q '^split_boot;' AnyKernel3/anykernel.sh || { echo "### anykernel.sh 缺少 split_boot，禁止出包"; exit 1; }
+          if [ -f AnyKernel3/dtbo.img ]; then echo "### OS4 模式禁止打包 dtbo.img"; exit 1; fi
+          rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+          sha256sum AnyKernel3/Image.gz-dtb "$ROM_DTB" > AnyKernel3/SHA256SUMS.txt
+          cat AnyKernel3/SHA256SUMS.txt
+          ls -l AnyKernel3/
+          ZIP=$GITHUB_WORKSPACE/kernel_workspace/$ZIP_NAME.zip
+          ( cd AnyKernel3 && zip -r9 "$ZIP" . -x '.*' > /dev/null )
+          ls -l "$ZIP"
+          unzip -l "$ZIP" | head -20
+          echo "### OS4 打包校验通过：kernel($(stat -c%s "$KSRC") B) + ROM dtb($DTBSZ B, $A)，未打包 dtbo" >> $GITHUB_STEP_SUMMARY
+
+      - name: 上传卡刷包工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_ZIP_NAME }}-${{ github.sha }}
+          path: kernel_workspace/*.zip
+          if-no-files-found: error
+
+      - name: 上传配置与校验信息
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_ZIP_NAME }}-${{ github.sha }}-config
+          path: |
+            kernel/out/config.used
+            kernel/out/Image.gz.sha256
+            kernel/build.log
+            kernel/out/build_failed.log
+          if-no-files-found: warn

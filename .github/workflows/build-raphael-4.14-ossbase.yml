@@ -1,0 +1,299 @@
+name: "4.14 同源构建 [HeliumStudio oss-base + raphael_defconfig + clang22]"
+
+# ============================================================================
+# 方案2：与作者（kmerc224 / Helium Studio）【完全同源】构建
+#
+#   依据：作者在 kmerc224/kernel_xiaomi_raphael_Helium-Studio @ oss-base 的
+#         .github/workflows/build.yml（作者官方构建流水线，逐字还原）
+#     · 源码  : HeliumStudio-Dev/kernel_xiaomi_raphael @ oss-base
+#               （小米 raphael OSS 树衍生，含 techpack/ + 小米私有驱动，
+#                 作者 CI 明确写死 KERNEL_REPO/KERNEL_BRANCH）
+#     · 配置  : raphael_defconfig（树自带，作者 CI 默认 defconfig）
+#               —— 不再导入「作者内核 IKCONFIG 提取的 exact config」，
+#                  也不再依赖 olddefconfig 去猜私有项
+#     · 工具链: Mandi-Sa clang 22.0.0 + binutils 2.45.1 静态包（与作者一致）
+#     · KSU   : tiann/KernelSU main 分支 setup.sh --cleanup（作者同款）
+#     · 编译  : make LLVM=1 O=out ... HOSTLDFLAGS="-lyaml"
+#               （作者 CI 依赖 libyaml-dev，dtc 需链 yaml）
+#     · 打包  : AnyKernel3 split_boot + flash_boot，不打包/不刷 dtbo
+#               → 出两个包：
+#                 A) tree-dtb : 用树自带 Image.gz-dtb（作者 build.yml 原样）
+#                 B) rom-dtb  : Image.gz + ROM 原 dtb 拼接（已实测可开机配方）
+# ============================================================================
+
+env:
+  TZ: Asia/Shanghai
+  KERNEL_REPO: HeliumStudio-Dev/kernel_xiaomi_raphael
+  KERNEL_BRANCH: oss-base
+  KERNEL_DEFCONFIG: raphael_defconfig
+  AUTHOR_EXACT_CONFIG: configs/raphael_exact_kernel_config.txt
+  CLANG_CACHE_KEY: clang22-MandiSa-amd64-kernel-arm_static-20260111
+  CLANG_URL: https://github.com/Mandi-Sa/clang/releases/download/amd64-kernel-arm_static-22/llvm22.0.0-binutils2.45.1_amd64-kernel-arm_static-20260111.7z
+  TC_DIR: /tmp/tc
+  ROM_DTB_REL: os4/raphael_kameyuki_os4_rom.dtb
+  AK3_SCRIPT_REL: os4/anykernel-os4.sh
+  KERNEL_ZIP_NAME: Zundamon-4.14-ossbase-OS4
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu:
+        description: '集成 KernelSU (tiann/KernelSU main)'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: raphael-4.14-ossbase-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 4.14 oss-base build
+    runs-on: ubuntu-latest
+    if: github.event.repository.owner.id == github.event.sender.id
+    steps:
+      - name: 检出本仓库（打包资源与作者 exact config）
+        uses: actions/checkout@v4
+        with:
+          path: buildrepo
+
+      - name: "[1/9] 参数与素材自检"
+        run: |
+          echo "BUILDREPO=$GITHUB_WORKSPACE/buildrepo" >> $GITHUB_ENV
+          echo "KERNEL_DIR=$GITHUB_WORKSPACE/kernel" >> $GITHUB_ENV
+          echo "ZIP_NAME=${KERNEL_ZIP_NAME}-${GITHUB_SHA::7}" >> $GITHUB_ENV
+          set -e
+          DTB=$GITHUB_WORKSPACE/buildrepo/$ROM_DTB_REL
+          AK3=$GITHUB_WORKSPACE/buildrepo/$AK3_SCRIPT_REL
+          EXACT=$GITHUB_WORKSPACE/buildrepo/$AUTHOR_EXACT_CONFIG
+          for f in "$DTB" "$AK3" "$EXACT"; do
+            [ -s "$f" ] || { echo "### 素材缺失: $f"; exit 1; }
+          done
+          echo "ROM 原 dtb   : $(stat -c%s "$DTB") B, sha256 $(sha256sum "$DTB" | cut -d' ' -f1)"
+          echo "AK3 OS4 脚本 : $AK3"
+          echo "作者 exact   : $(stat -c%s "$EXACT") B（仅用于同源度比对，不参与配置生成）"
+          echo "### 4.14 同源构建（方案2：HeliumStudio oss-base）" >> $GITHUB_STEP_SUMMARY
+          echo "| 项 | 值 |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| 内核源 | $KERNEL_REPO |" >> $GITHUB_STEP_SUMMARY
+          echo "| 分支 | $KERNEL_BRANCH |" >> $GITHUB_STEP_SUMMARY
+          echo "| 配置 | $KERNEL_DEFCONFIG（树自带） |" >> $GITHUB_STEP_SUMMARY
+          echo "| 工具链 | Mandi-Sa clang 22 (静态) |" >> $GITHUB_STEP_SUMMARY
+          echo "| KernelSU | ${{ inputs.ksu }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 产物 | A: tree-dtb / B: Image.gz + ROM dtb（都不刷 dtbo） |" >> $GITHUB_STEP_SUMMARY
+
+      - name: "[2/9] 安装构建依赖（含 libyaml-dev，作者 CI 要求）"
+        run: |
+          sudo apt-get update
+          sudo -E apt-get -y -qq install git make bc bison flex libssl-dev libelf-dev cpio \
+            p7zip-full zip unzip curl ca-certificates python3 \
+            device-tree-compiler libyaml-dev \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          df -h / | tail -1
+
+      - name: "[3/9] 恢复 clang22 工具链缓存"
+        id: tc-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/tc
+          key: ${{ env.CLANG_CACHE_KEY }}
+
+      - name: "[4/9] 下载 clang22 工具链（缓存未命中时）"
+        if: steps.tc-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 20
+        run: |
+          set -e
+          cd /tmp
+          curl -sSL --retry 3 -o tc.7z "$CLANG_URL"
+          ls -lh tc.7z
+          7z x -y tc.7z -o/tmp/tc > /dev/null
+          ls /tmp/tc | head
+
+      - name: "[5/9] 工具链校验（clang22 + 静态 binutils）"
+        run: |
+          set -e
+          export PATH=$TC_DIR/bin:$TC_DIR/aarch64-linux-gnu/bin:$TC_DIR/arm-linux-gnueabi/bin:$PATH
+          clang --version | head -2
+          ld.lld --version | head -1
+          llvm-ar --version | head -1
+          CVER=$(clang --version | head -1 | grep -oE 'clang version [0-9]+' | grep -oE '[0-9]+$')
+          echo "clang major = $CVER（作者为 22）"
+          if [ "$CVER" != "22" ]; then echo "### 警告：clang 主版本与作者（22）不一致"; fi
+
+      - name: "[6/9] 检出作者同源树 oss-base"
+        uses: actions/checkout@v4
+        with:
+          repository: HeliumStudio-Dev/kernel_xiaomi_raphael
+          ref: oss-base
+          path: kernel
+          fetch-depth: 1
+
+      - name: "[7/9] 生成 raphael_defconfig 配置（+ KernelSU + olddefconfig）"
+        run: |
+          set -e
+          cd $KERNEL_DIR
+          export PATH=$TC_DIR/bin:$TC_DIR/aarch64-linux-gnu/bin:$TC_DIR/arm-linux-gnueabi/bin:$PATH
+          export ARCH=arm64 SUBARCH=arm64
+
+          echo ">>> 树信息"
+          git log -1 --oneline || true
+          ls arch/arm64/configs/
+
+          echo ">>> 生成 $KERNEL_DEFCONFIG"
+          make LLVM=1 O=out ARCH=arm64 $KERNEL_DEFCONFIG 2>&1 | tail -20
+
+          if [ "${{ inputs.ksu }}" = "true" ]; then
+            echo ">>> 集成 KernelSU（作者同款 setup.sh --cleanup）"
+            rm -rf KernelSU
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s -- --cleanup
+            ./scripts/config --file out/.config --enable CONFIG_KSU
+            make LLVM=1 O=out ARCH=arm64 olddefconfig 2>&1 | tail -10
+          fi
+
+          echo "===== 同源度比对（本树 defconfig 生成结果 vs 作者内核 IKCONFIG） ====="
+          SRC=$BUILDREPO/$AUTHOR_EXACT_CONFIG
+          grep -vE '^[[:space:]]*$' "$SRC" | sort -u > /tmp/author_cfg.txt
+          grep -vE '^[[:space:]]*$' out/.config | sort -u > /tmp/used_cfg.txt
+          echo "作者 exact 项数 : $(wc -l < /tmp/author_cfg.txt)"
+          echo "本树生成项数    : $(wc -l < /tmp/used_cfg.txt)"
+          ONLY_A=$(comm -23 /tmp/author_cfg.txt /tmp/used_cfg.txt | wc -l)
+          ONLY_B=$(comm -13 /tmp/author_cfg.txt /tmp/used_cfg.txt | wc -l)
+          SAME=$(comm -12 /tmp/author_cfg.txt /tmp/used_cfg.txt | wc -l)
+          echo "仅作者有（本树缺）: $ONLY_A"
+          echo "仅本树有（作者无）: $ONLY_B"
+          echo "完全相同          : $SAME"
+          echo "| 同源度 | 相同 $SAME / 仅作者有 $ONLY_A / 仅本树有 $ONLY_B |" >> $GITHUB_STEP_SUMMARY
+          echo "--- 仅作者有（本树缺）前 40 条 ---"
+          comm -23 /tmp/author_cfg.txt /tmp/used_cfg.txt | head -40 || true
+
+          echo "===== 开机关键项 ====="
+          FAIL=0
+          for k in CONFIG_ARCH_SM8150 CONFIG_MACH_XIAOMI_RAPHAEL CONFIG_TOUCHSCREEN_GOODIX_GTX8 \
+                   CONFIG_FINGERPRINT_GOODIX_TA CONFIG_EROFS_FS CONFIG_OVERLAY_FS \
+                   CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE CONFIG_BUILD_ARM64_DT_OVERLAY; do
+            if grep -qE "^${k}=y$" out/.config; then echo "  [OK ] $k"; else echo "  [MISS] $k"; FAIL=$((FAIL+1)); fi
+          done
+          if [ "${{ inputs.ksu }}" = "true" ]; then
+            grep -qE '^CONFIG_KSU=y$' out/.config && echo "  [OK ] CONFIG_KSU" || { echo "  [MISS] CONFIG_KSU"; FAIL=$((FAIL+1)); }
+          fi
+          if [ "$FAIL" -ne 0 ]; then
+            echo "### 关键项缺失（$FAIL 项），禁止继续编译"; exit 1
+          fi
+          cp -f out/.config out/config.used
+
+      - name: "[8/9] 编译内核（作者配方 LLVM=1 + HOSTLDFLAGS=-lyaml）"
+        run: |
+          cd $KERNEL_DIR
+          export PATH=$TC_DIR/bin:$TC_DIR/aarch64-linux-gnu/bin:$TC_DIR/arm-linux-gnueabi/bin:$PATH
+          export ARCH=arm64 SUBARCH=arm64
+
+          EXTRA=""
+          grep -q '^CONFIG_KERNEL_GZIP=y' out/.config && EXTRA="$EXTRA Image.gz"
+          grep -q '^CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y' out/.config && EXTRA="$EXTRA Image.gz-dtb"
+          grep -q '^CONFIG_BUILD_ARM64_DT_OVERLAY=y' out/.config && EXTRA="$EXTRA dtbo.img"
+          echo "附加目标：dtbs $EXTRA"
+
+          START=$(date +%s)
+          set +e
+          make LLVM=1 O=out ARCH=arm64 -j$(nproc --all) \
+            HOSTLDFLAGS="-lyaml" dtbs $EXTRA > build.log 2>&1
+          RC=$?
+          set -e
+          END=$(date +%s)
+          echo "编译退出码: $RC | 耗时: $((END-START)) 秒"
+          echo "| 编译耗时 | $((END-START)) 秒 |" >> $GITHUB_STEP_SUMMARY
+          if [ "$RC" -ne 0 ]; then
+            echo "########## 编译错误汇总 ##########"
+            grep -nE "error:|fatal error:|Error [0-9]+|undefined reference|\*\*\* " build.log | sort -u | head -60 || true
+            echo "########## 日志尾部 180 行 ##########"
+            tail -n 180 build.log
+            cp -f build.log out/build_failed.log || true
+            exit 1
+          fi
+          tail -n 8 build.log
+          ls -l out/arch/arm64/boot/Image out/arch/arm64/boot/Image.gz out/arch/arm64/boot/Image.gz-dtb 2>/dev/null || true
+          sha256sum out/arch/arm64/boot/Image.gz 2>/dev/null | tee out/Image.gz.sha256 || true
+          strings out/arch/arm64/boot/Image 2>/dev/null | grep -m1 "Linux version" || true
+
+      - name: 编译结果核查
+        if: always()
+        run: |
+          cd $KERNEL_DIR 2>/dev/null || exit 0
+          ls -l out/arch/arm64/boot/ 2>/dev/null || true
+          cp -f out/.config out/config.used 2>/dev/null || true
+          { echo "### 编译产物"; echo '```'; ls -l out/arch/arm64/boot/ 2>/dev/null || true; echo '```'; } >> $GITHUB_STEP_SUMMARY
+
+      - name: "[9/9] 打包 OS4 卡刷包 A/B（都不打包、不刷 dtbo）"
+        run: |
+          set -e
+          KSRC=$KERNEL_DIR/out/arch/arm64/boot
+          ROM_DTB=$BUILDREPO/$ROM_DTB_REL
+          [ -s "$BUILDREPO/$AK3_SCRIPT_REL" ] || { echo "### 缺少 anykernel-os4.sh"; exit 1; }
+          OUT=$GITHUB_WORKSPACE/kernel_workspace
+          mkdir -p $OUT
+
+          prepare_ak3() {
+            rm -rf $OUT/ak3
+            git clone --depth=1 https://github.com/osm0sis/AnyKernel3 $OUT/ak3
+            sed -i 's/do.devicecheck=1/do.devicecheck=0/g' $OUT/ak3/anykernel.sh
+            sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' $OUT/ak3/anykernel.sh
+            sed -i 's/is_slot_device=1;/is_slot_device=0;/g' $OUT/ak3/anykernel.sh
+            rm -f $OUT/ak3/dtb $OUT/ak3/dtbo.img $OUT/ak3/Image.gz $OUT/ak3/Image.gz-dtb
+            cp -f "$BUILDREPO/$AK3_SCRIPT_REL" $OUT/ak3/anykernel.sh
+            sed -i 's|^\([[:space:]]*\)flash_generic dtbo;|\1# flash_generic dtbo; # OS4 adapt: dtbo 分区保持 ROM 原样|' $OUT/ak3/tools/ak3-core.sh
+            grep -qE '^[[:space:]]*# flash_generic dtbo;' $OUT/ak3/tools/ak3-core.sh || { echo "### ak3-core.sh dtbo 未注释"; exit 1; }
+            grep -q '^flash_boot;' $OUT/ak3/anykernel.sh || { echo "### anykernel.sh 缺 flash_boot"; exit 1; }
+            grep -q '^split_boot;' $OUT/ak3/anykernel.sh || { echo "### anykernel.sh 缺 split_boot"; exit 1; }
+            rm -rf $OUT/ak3/.git* $OUT/ak3/README.md $OUT/ak3/ramdisk $OUT/ak3/modules $OUT/ak3/patch
+          }
+
+          # ---- 包 A：树自带 Image.gz-dtb（作者 build.yml 原样） ----
+          if [ -s "$KSRC/Image.gz-dtb" ]; then
+            prepare_ak3
+            cp -f "$KSRC/Image.gz-dtb" $OUT/ak3/Image.gz-dtb
+            [ -f $OUT/ak3/dtbo.img ] && { echo "### A 包禁止含 dtbo.img"; exit 1; }
+            ( cd $OUT/ak3 && zip -r9 "$OUT/${ZIP_NAME}-treedtb.zip" . -x '.*' > /dev/null )
+            echo "### A 包（tree-dtb）：Image.gz-dtb $(stat -c%s "$KSRC/Image.gz-dtb") B" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 跳过 A 包：未生成 Image.gz-dtb"
+          fi
+
+          # ---- 包 B：Image.gz + ROM 原 dtb 拼接（对照包已验证可开机） ----
+          if [ -s "$KSRC/Image.gz" ]; then
+            prepare_ak3
+            cat "$KSRC/Image.gz" "$ROM_DTB" > $OUT/ak3/Image.gz-dtb
+            DTBSZ=$(stat -c%s "$ROM_DTB")
+            A=$(tail -c $DTBSZ $OUT/ak3/Image.gz-dtb | sha256sum | cut -d' ' -f1)
+            B=$(sha256sum "$ROM_DTB" | cut -d' ' -f1)
+            [ "$A" = "$B" ] || { echo "### B 包尾部 dtb 校验不一致"; exit 1; }
+            sha256sum $OUT/ak3/Image.gz-dtb "$ROM_DTB" > $OUT/ak3/SHA256SUMS.txt
+            [ -f $OUT/ak3/dtbo.img ] && { echo "### B 包禁止含 dtbo.img"; exit 1; }
+            ( cd $OUT/ak3 && zip -r9 "$OUT/${ZIP_NAME}-romdtb.zip" . -x '.*' > /dev/null )
+            echo "### B 包（rom-dtb）：Image.gz $(stat -c%s "$KSRC/Image.gz") B + ROM dtb $DTBSZ B" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 跳过 B 包：未生成 Image.gz"
+          fi
+
+          echo ">>> 产物清单"
+          ls -l $OUT/
+          for z in $OUT/*.zip; do echo "--- $z ---"; unzip -l "$z" | head -15; done
+
+      - name: 上传卡刷包工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_ZIP_NAME }}-${{ github.sha }}
+          path: kernel_workspace/*.zip
+          if-no-files-found: error
+
+      - name: 上传配置与校验信息
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_ZIP_NAME }}-${{ github.sha }}-config
+          path: |
+            kernel/out/config.used
+            kernel/out/Image.gz.sha256
+            kernel/build.log
+            kernel/out/build_failed.log
+          if-no-files-found: warn

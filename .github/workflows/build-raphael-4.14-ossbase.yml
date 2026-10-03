@@ -154,11 +154,17 @@ jobs:
           make LLVM=1 O=out ARCH=arm64 $KERNEL_DEFCONFIG 2>&1 | tail -20
 
           if [ "${{ env.KSU_FLAG }}" = "true" ]; then
-            echo ">>> 集成 KernelSU（作者同款 setup.sh --cleanup）"
+            echo ">>> 集成 KernelSU（setup.sh：无参数=集成，--cleanup 仅做清理）"
             rm -rf KernelSU
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s -- --cleanup
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" -o /tmp/ksu_setup.sh
+            bash /tmp/ksu_setup.sh
+            echo ">>> 集成自检"
+            ls -ld drivers/kernelsu || echo "!! drivers/kernelsu 符号链接缺失"
+            grep -c kernelsu drivers/Makefile drivers/Kconfig || true
+            ls KernelSU/kernel/Kconfig && head -5 KernelSU/kernel/Kconfig
             ./scripts/config --file out/.config --enable CONFIG_KSU
             make LLVM=1 O=out ARCH=arm64 olddefconfig 2>&1 | tail -10
+            grep -E '^CONFIG_KSU' out/.config || echo "!! olddefconfig 后仍无 CONFIG_KSU"
           fi
 
           echo "===== 同源度比对（本树 defconfig 生成结果 vs 作者内核 IKCONFIG） ====="

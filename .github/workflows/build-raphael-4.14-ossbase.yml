@@ -172,6 +172,19 @@ jobs:
             ./scripts/config --file out/.config --disable CONFIG_KSU_SYSCALL_TABLE_HOOK
 
             echo ">>> KSU 源码 4.14 兼容修复"
+            KU=drivers/kernelsu/feature/kernel_umount.c
+            if [ -f "$KU" ]; then
+              # 上游条件写作 `>=5.9 || defined(KSU_HAS_PATH_UMOUNT)`，4.14 下被误判成立，
+              # 于是引用内核并不存在的 path_umount（本树只有 path_mount）→ 链接期 undefined symbol
+              sed -i 's/defined(KSU_HAS_PATH_UMOUNT)/defined(KSU_HAS_PATH_UMOUNT) \&\& LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)/' "$KU"
+              # 改走 else 分支（sys_umount/ksys_umount），需保证 <linux/syscalls.h> 被引入
+              sed -i 's/^#ifndef KSU_HAS_PATH_UMOUNT$/#if 1/' "$KU"
+              if grep -q "KSU_HAS_PATH_UMOUNT) \&\& LINUX_VERSION_CODE" "$KU"; then
+                echo "[KSU] kernel_umount.c 已适配 4.14（改走 sys_umount 路径）"
+              else
+                echo "### kernel_umount.c 适配未生效"; exit 1
+              fi
+            fi
             EV=drivers/kernelsu/sulog/event.c
             if [ -f "$EV" ] && grep -qE '^[[:space:]]*struct timespec64 ts;' "$EV"; then
               sed -i 's/struct timespec64 ts;/#if KERNEL_VERSION(4, 19, 0) <= LINUX_VERSION_CODE\n    struct timespec64 ts;\n#else\n    struct timespec ts;\n#endif/' "$EV"

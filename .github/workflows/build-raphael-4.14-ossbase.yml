@@ -393,6 +393,9 @@ jobs:
             echo "产物:"
             for z in kernel_workspace/*.zip; do echo "- $(basename "$z") ($(stat -c%s "$z") B)"; done
           } > /tmp/relnotes.md
+          # 本步骤工作目录不是 git 工作树，gh 必须显式指定仓库，否则报
+          # failed to run git: fatal: not a git repository (or any of the parent directories)
           gh release create "$TAG" kernel_workspace/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
             --title "$TITLE" --notes-file /tmp/relnotes.md --target "$GITHUB_SHA"
           echo "Release 已发布: $TAG"

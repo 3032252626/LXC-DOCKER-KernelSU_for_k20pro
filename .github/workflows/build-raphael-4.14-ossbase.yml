@@ -12,7 +12,9 @@ name: "4.14 同源构建 [HeliumStudio oss-base + raphael_defconfig + clang22]"
 #               —— 不再导入「作者内核 IKCONFIG 提取的 exact config」，
 #                  也不再依赖 olddefconfig 去猜私有项
 #     · 工具链: Mandi-Sa clang 22.0.0 + binutils 2.45.1 静态包（与作者一致）
-#     · KSU   : tiann/KernelSU main 分支 setup.sh --cleanup（作者同款）
+#     · KSU   : KernelSU-Next @ legacy 分支 v3.4.0-legacy + manual hook
+#               —— tiann/KernelSU 自 v1.0 起放弃非 GKI；其 KSU 依赖 KPROBES，
+#                  而本树 raphael_defconfig 中 KPROBES=n，故必须走 legacy 线
 #     · 编译  : make LLVM=1 O=out ... HOSTLDFLAGS="-lyaml"
 #               （作者 CI 依赖 libyaml-dev，dtc 需链 yaml）
 #     · 打包  : AnyKernel3 split_boot + flash_boot，不打包/不刷 dtbo
@@ -40,7 +42,7 @@ on:
   workflow_dispatch:
     inputs:
       ksu:
-        description: '集成 KernelSU (tiann/KernelSU main)'
+        description: '注入 KernelSU-Next legacy v3.4.0（4.14 非GKI manual hook）'
         required: false
         type: boolean
         default: true
@@ -154,17 +156,64 @@ jobs:
           make LLVM=1 O=out ARCH=arm64 $KERNEL_DEFCONFIG 2>&1 | tail -20
 
           if [ "${{ env.KSU_FLAG }}" = "true" ]; then
-            echo ">>> 集成 KernelSU（setup.sh：无参数=集成，--cleanup 仅做清理）"
-            rm -rf KernelSU
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" -o /tmp/ksu_setup.sh
-            bash /tmp/ksu_setup.sh
+            echo ">>> 注入 KernelSU-Next legacy（4.14 非GKI 官方维护线，manual hook）"
+            echo "    原因：tiann/KernelSU 自 v1.0 起放弃非 GKI；且其 Kconfig 依赖 KPROBES，本树 KPROBES=n"
+            rm -rf KernelSU KernelSU-Next drivers/kernelsu
+            curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/legacy/kernel/setup.sh" -o /tmp/ksu_setup.sh
+            bash /tmp/ksu_setup.sh v3.4.0-legacy
             echo ">>> 集成自检"
             ls -ld drivers/kernelsu || echo "!! drivers/kernelsu 符号链接缺失"
-            grep -c kernelsu drivers/Makefile drivers/Kconfig || true
-            ls KernelSU/kernel/Kconfig && head -5 KernelSU/kernel/Kconfig
-            ./scripts/config --file out/.config --enable CONFIG_KSU
+            grep -n kernelsu drivers/Makefile drivers/Kconfig || true
+            # KSU 依赖 KPROBES；4.14 < 4.17 无 syscall-table hook、kprobes hook 不适用 <5.10，故强制 manual hook
+            for k in CONFIG_MODULES CONFIG_KPROBES CONFIG_HAVE_KPROBES CONFIG_KPROBE_EVENTS CONFIG_KSU CONFIG_KSU_MANUAL_HOOK; do
+              ./scripts/config --file out/.config --enable "$k"
+            done
+            ./scripts/config --file out/.config --disable CONFIG_KSU_KPROBES_HOOK
+            ./scripts/config --file out/.config --disable CONFIG_KSU_SYSCALL_TABLE_HOOK
+
+            echo ">>> KSU 源码 4.14 兼容修复"
+            EV=drivers/kernelsu/sulog/event.c
+            if [ -f "$EV" ] && grep -qE '^[[:space:]]*struct timespec64 ts;' "$EV"; then
+              sed -i 's/struct timespec64 ts;/#if KERNEL_VERSION(4, 19, 0) <= LINUX_VERSION_CODE\n    struct timespec64 ts;\n#else\n    struct timespec ts;\n#endif/' "$EV"
+              echo "[KSU] event.c ts 声明已按内核版本条件化"
+            fi
+            PM=drivers/kernelsu/hook/patch_memory.c
+            if [ -f "$PM" ] && grep -q 'probe_kernel_write' "$PM"; then
+              if grep -qE '(EXPORT_SYMBOL(_GPL)?[(]probe_kernel_write[)]|^[A-Za-z_].*probe_kernel_write[[:space:]]*[(])' mm/maccess.c 2>/dev/null; then
+                echo "[KSU] 内核提供 probe_kernel_write，保留 legacy 映射"
+              else
+                sed -i '/^#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)$/,/^#endif$/c\/* 本内核已 backport 5.8 nofault API：直接使用 copy_to_kernel_nofault */' "$PM"
+                echo "[KSU] 已移除 patch_memory.c 中 probe_kernel_write 映射"
+              fi
+            fi
+
+            echo ">>> manual hook 入口（kernel/reboot.c，4.14 manual hook 必需）"
+            if grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
+              echo "[OK] kernel/reboot.c 已存在 ksu_handle_sys_reboot"
+            else
+              cat > /tmp/ksu_reboot_hook.txt <<'EOF'
+          #ifdef CONFIG_KSU_MANUAL_HOOK
+              {
+                  extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
+                  if (ksu_handle_sys_reboot(magic1, magic2, cmd, &arg))
+                      return 0;
+              }
+          #endif
+          EOF
+              S=$(awk '/^SYSCALL_DEFINE4[(]reboot,/{print NR; exit}' kernel/reboot.c)
+              M=$(awk -v s="$S" 'NR>s && /^[{]/{print NR; exit}' kernel/reboot.c)
+              echo "[i] SYSCALL_DEFINE4(reboot) 函数体起始行: $M"
+              if [ -z "$M" ]; then echo "### 未定位 reboot 函数体，manual hook 无法集成"; exit 1; fi
+              N=$(awk -v s="$M" 'NR>s && /^[[:space:]]*$/{print NR; exit}' kernel/reboot.c)
+              N=${N:-$((M+1))}
+              sed -i "$((N-1))r /tmp/ksu_reboot_hook.txt" kernel/reboot.c
+              echo "[OK] 已插入 ksu_handle_sys_reboot 调用点"
+            fi
+            grep -q "ksu_handle_sys_reboot" kernel/reboot.c || { echo "### manual hook 集成校验失败"; exit 1; }
+
             make LLVM=1 O=out ARCH=arm64 olddefconfig 2>&1 | tail -10
-            grep -E '^CONFIG_KSU' out/.config || echo "!! olddefconfig 后仍无 CONFIG_KSU"
+            echo "--- olddefconfig 后 KSU 相关项 ---"
+            grep -E '^CONFIG_KSU|^CONFIG_KPROBES|^CONFIG_HAVE_KPROBES' out/.config || echo "!! 仍无 KSU/KPROBES 项"
           fi
 
           echo "===== 同源度比对（本树 defconfig 生成结果 vs 作者内核 IKCONFIG） ====="

@@ -73,11 +73,6 @@ on:
         type: string
         default: ''
 
-  push:
-    branches: [main]
-    paths:
-      - 'ci-triggers/zundamon-5.4-miui/**'
-
 concurrency:
   group: raphael-5.4-lxc-${{ github.ref }}
   cancel-in-progress: false

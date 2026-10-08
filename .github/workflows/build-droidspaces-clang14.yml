@@ -261,6 +261,32 @@ jobs:
         # 4.14 < 4.17：KSU_SYSCALL_TABLE_HOOK 要求 >=4.17；KSU_KPROBES_HOOK 官方不适用于 <5.10
         sed -i '/^CONFIG_KSU_KPROBES_HOOK=/d;/^CONFIG_KSU_SYSCALL_TABLE_HOOK=/d' $CFG
         grep -q '^CONFIG_KSU_MANUAL_HOOK=y' $CFG || echo "CONFIG_KSU_MANUAL_HOOK=y" >> $CFG
+    - name: 集成 KernelSU manual hook 到 kernel/reboot.c
+      if: env.ENABLE_KERNELSU == 'true'
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        echo "=== KernelSU-Next Kbuild 硬性检查：kernel/reboot.c 必须含 ksu_handle_sys_reboot 调用点 ==="
+        if grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
+          echo "[OK] reboot.c 已存在调用点，跳过注入"
+        else
+          printf '%s\n' '#ifdef CONFIG_KSU_MANUAL_HOOK' '    {' '        extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);' '        if (ksu_handle_sys_reboot(magic1, magic2, cmd, &arg))' '            return 0;' '    }' '#endif' > /tmp/ksu_reboot_hook.txt
+          echo "[i] 待注入片段："
+          cat /tmp/ksu_reboot_hook.txt
+          S=$(awk '/^SYSCALL_DEFINE4[(]reboot,/{print NR; exit}' kernel/reboot.c)
+          [ -n "$S" ] || { echo "### 未定位 SYSCALL_DEFINE4(reboot)，无法集成 manual hook"; exit 1; }
+          M=$(awk -v s="$S" 'NR>s && /^[{]/{print NR; exit}' kernel/reboot.c)
+          [ -n "$M" ] || { echo "### 未定位 reboot 函数体起始"; exit 1; }
+          N=$(awk -v s="$M" 'NR>s && /^[[:space:]]*$/{print NR; exit}' kernel/reboot.c)
+          N=${N:-$((M+1))}
+          echo "[i] 定位结果：SYSCALL_DEFINE4=$S  函数体左括号=$M  首个空行=$N"
+          echo "[i] 插在第 $((N-1)) 行之后（局部变量声明之后、业务逻辑之前，规避 C90 混合声明警告）"
+          sed -i "$((N-1))r /tmp/ksu_reboot_hook.txt" kernel/reboot.c
+          echo "[OK] 注入完成"
+        fi
+        grep -q "ksu_handle_sys_reboot" kernel/reboot.c || { echo "### manual hook 集成校验失败，禁止继续"; exit 1; }
+        echo "--- 注入结果校验 ---"
+        grep -n -B3 -A7 "ksu_handle_sys_reboot" kernel/reboot.c | head -20
+
     - name: 设置ccache缓存
 
       uses: hendrikmuhs/ccache-action@v1.2

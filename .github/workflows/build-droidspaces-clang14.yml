@@ -271,6 +271,31 @@ jobs:
 
         max-size: 2G
 
+    - name: 修复 raphael dtb/dtbo 构建目标（oss-base 树适配）
+      run: |
+        set -e
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        CFG=arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        MK=arch/arm64/boot/dts/qcom/Makefile
+
+        echo "=== [1/2] 开启 CONFIG_MACH_XIAOMI_SM8150（raphael overlay dtbo 的构建开关）==="
+        grep -q "^CONFIG_MACH_XIAOMI_SM8150=y" $CFG || echo "CONFIG_MACH_XIAOMI_SM8150=y" >> $CFG
+        grep -n "^CONFIG_MACH_XIAOMI_SM8150" $CFG
+
+        echo "=== [2/2] 把 sm8150-v2.dtb 补进 dtb-y 目标 ==="
+        echo "    本树 dts/qcom/Makefile 中 sm8150-v2.dtb 仅出现在 xxx.dtbo-base :=，从未作为 dtb-y 目标；"
+        echo "    且 ARM64 分支 always := \$(dtb-y) 为立即展开，必须插在该行之前才会生效。"
+        grep -q "^dtb-y += sm8150-v2.dtb$" $MK || {
+          LINE=$(grep -n "ifeq (\$(CONFIG_ARM64),y)" "$MK" | head -1 | cut -d: -f1)
+          [ -n "$LINE" ] || { echo "### 未定位 always 锚点，注入失败"; exit 1; }
+          head -n $((LINE-1)) "$MK" > /tmp/mk.new
+          echo "dtb-y += sm8150-v2.dtb" >> /tmp/mk.new
+          tail -n +$LINE "$MK" >> /tmp/mk.new
+          cp /tmp/mk.new "$MK"
+          echo "[OK] 已在第 $LINE 行前注入 dtb-y += sm8150-v2.dtb"
+        }
+        grep -n "^dtb-y += sm8150-v2.dtb$" $MK
+
     - name: 修复源码编译
 
       run: |
@@ -360,6 +385,20 @@ jobs:
         Q=out/arch/arm64/boot/dts/qcom
         echo "----- dtb/dtbo 产物 -----"
         ls -l $Q/sm8150-v2.dtb $Q/raphael-sm8150-overlay.dtbo $Q/dtbo.img 2>/dev/null || true
+        # ARM64 分支 always := $(dtb-y) 不含 dtbo-y，overlay 不随 make dtbs 自动产出，按需手工编译
+        if [ ! -f $Q/sm8150-v2.dtb ] && [ -f $Q/sm8150-v2.dts ]; then
+          echo ">>> sm8150-v2.dtb 缺失，手工编译"
+          cpp -nostdinc -I include -I arch/arm64/boot/dts -I arch/arm64/boot/dts/include \
+              -undef -x assembler-with-cpp -o /tmp/sm8150-v2.dts.tmp arch/arm64/boot/dts/qcom/sm8150-v2.dts
+          dtc -I dts -O dtb -o $Q/sm8150-v2.dtb /tmp/sm8150-v2.dts.tmp
+        fi
+        if [ ! -f $Q/raphael-sm8150-overlay.dtbo ]; then
+          echo ">>> raphael-sm8150-overlay.dtbo 缺失，手工编译（-@ 生成 overlay 符号）"
+          cpp -nostdinc -I include -I arch/arm64/boot/dts -I arch/arm64/boot/dts/include \
+              -undef -x assembler-with-cpp -o /tmp/raphael-overlay.dts.tmp arch/arm64/boot/dts/qcom/raphael-sm8150-overlay.dts
+          dtc -@ -I dts -O dtb -o $Q/raphael-sm8150-overlay.dtbo /tmp/raphael-overlay.dts.tmp
+        fi
+
         [ -f $Q/sm8150-v2.dtb ] || { echo "### 缺少 sm8150-v2.dtb（boot 内 dtb 段来源），构建失败"; exit 1; }
         [ -f $Q/raphael-sm8150-overlay.dtbo ] || { echo "### 缺少 raphael-sm8150-overlay.dtbo，构建失败"; exit 1; }
         if [ ! -f $Q/dtbo.img ]; then

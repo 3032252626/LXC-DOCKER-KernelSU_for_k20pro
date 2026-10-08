@@ -287,6 +287,34 @@ jobs:
         echo "--- 注入结果校验 ---"
         grep -n -B3 -A7 "ksu_handle_sys_reboot" kernel/reboot.c | head -20
 
+    - name: 修复 KernelSU-Next sulog 在 4.14 的时间 API（timespec64 不兼容）
+      if: env.ENABLE_KERNELSU == 'true'
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        # v3.4.0-legacy 的 sulog/event.c 把 ts 声明为 struct timespec64，
+        # 却在 LINUX_VERSION_CODE < 4.19 分支调用 get_monotonic_boottime(&ts)；
+        # 4.14 的 get_monotonic_boottime 来自 timekeeping32.h，签名是 struct timespec *，
+        # 二者不兼容并被 -Werror 判死（incompatible pointer types）。
+        # 4.14 原生提供 ktime_get_boottime_ts64(struct timespec64 *)，语义等价（CLOCK_BOOTTIME）。
+        # 注意：drivers/kernelsu 是指向 KernelSU-Next/kernel 的符号链接，sed 须 --follow-symlinks。
+        for F in drivers/kernelsu/sulog/event.c KernelSU-Next/kernel/sulog/event.c; do
+          [ -f "$F" ] || continue
+          sed -i --follow-symlinks 's/\bget_monotonic_boottime[[:space:]]*([[:space:]]*&ts[[:space:]]*)/ktime_get_boottime_ts64(\&ts)/g' "$F"
+        done
+        F=drivers/kernelsu/sulog/event.c
+        [ -f "$F" ] || F=KernelSU-Next/kernel/sulog/event.c
+        if [ ! -f "$F" ]; then
+          echo "### 未找到 sulog/event.c，KernelSU 注入可能未生效，禁止继续"
+          exit 1
+        fi
+        echo "--- 校验：不得残留 get_monotonic_boottime 调用 ---"
+        grep -n "get_monotonic_boottime\|ktime_get_boottime_ts64" "$F" || echo "(无匹配)"
+        if grep -q "get_monotonic_boottime" "$F"; then
+          echo "### sulog 时间 API 适配失败，禁止继续"
+          exit 1
+        fi
+        echo "[OK] sulog/event.c 已适配 4.14 时间 API"
+
     - name: 设置ccache缓存
 
       uses: hendrikmuhs/ccache-action@v1.2

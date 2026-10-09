@@ -4,6 +4,24 @@ on:
 
   workflow_dispatch:
 
+    inputs:
+
+      rom_partition:
+
+        description: 'ROM 分区类型（logical=动态分区 / static=老式静态分区）'
+
+        required: true
+
+        default: 'logical'
+
+        type: choice
+
+        options:
+
+          - logical
+
+          - static
+
 jobs:
 
   build:
@@ -53,6 +71,7 @@ jobs:
         cat config-4.14.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
 
         cat config-4.14.env | grep KERNELSU_TAG= >> $GITHUB_ENV
+        echo "ROM_PARTITION=${{ inputs.rom_partition || 'logical' }}" >> $GITHUB_ENV
 
     - name: 构建编译内核环境
 
@@ -461,58 +480,103 @@ jobs:
         fi
         ls -l $Q/dtbo.img
 
-    - name: 打包 AnyKernel3（锁定 sm8150-v2 appended dtb + dtbo 同源）
+    - name: 打包 AnyKernel3（对齐 ROM 作者实现：dtb 动态改写 + 刷 dtbo + 机型校验）
 
       run: |
 
         cd $GITHUB_WORKSPACE/kernel_workspace
-
         git clone https://github.com/osm0sis/AnyKernel3
+        cd AnyKernel3
 
-        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-
-        sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
-
-        sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
-
-        Q=android-kernel/out/arch/arm64/boot/dts/qcom
-        KIMG=${KERNEL_IMAGE_NAME:-Image.gz-dtb}
+        Q=../android-kernel/out/arch/arm64/boot/dts/qcom
         BASE=$Q/sm8150-v2.dtb
+        KIMG=${KERNEL_IMAGE_NAME:-Image.gz-dtb}
         [ -f "$BASE" ] || { echo "### 缺少 sm8150-v2.dtb，禁止出包"; exit 1; }
-        # 优先取未附加 dtb 的 Image.gz，消除"内核自动 append 了别的 dtb"的不确定性
-        if [ -f android-kernel/out/arch/arm64/boot/Image.gz ]; then
-          SRC=android-kernel/out/arch/arm64/boot/Image.gz
+
+        # ---------- 2.1 组装内核段：Image.gz（未附加版优先，消除 appen ded 不确定性） ----------
+        if [ -f ../android-kernel/out/arch/arm64/boot/Image.gz ]; then
+          SRC=../android-kernel/out/arch/arm64/boot/Image.gz
         else
-          SRC=android-kernel/out/arch/arm64/boot/$KIMG
+          SRC=../android-kernel/out/arch/arm64/boot/$KIMG
         fi
-        cp "$SRC" AnyKernel3/$KIMG
-        DTBSZ=$(stat -c%s "$BASE")
-        if [ "$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)" != "$(sha256sum $BASE | cut -d' ' -f1)" ]; then
-          echo ">>> 内核镜像尾部 dtb 与 sm8150-v2.dtb 不一致，执行拼装对齐"
-          cat AnyKernel3/$KIMG "$BASE" > AnyKernel3/.kimg.tmp
-          mv -f AnyKernel3/.kimg.tmp AnyKernel3/$KIMG
+        cp "$SRC" Image.gz
+
+        # ---------- 2.2 准备可改写的 dtb 副本（对齐作者的 patch_dtb 输入） ----------
+        cp "$BASE" dtb
+        DTBSZ=$(stat -c%s dtb)
+        echo "[i] dtb 原始大小: $DTBSZ B"
+
+        # ---------- 2.3 准备 fdtput（用系统 dtc 包，编译机上执行，不进手机） ----------
+        if ! command -v fdtput >/dev/null 2>&1; then
+          echo ">>> 安装 device-tree-compiler（提供 fdtput）"
+          sudo apt-get update -qq >/dev/null 2>&1 || true
+          sudo apt-get install -y device-tree-compiler >/dev/null 2>&1 || true
         fi
-        rm -f AnyKernel3/dtb
+        command -v fdtput >/dev/null 2>&1 || { echo "### fdtput 不可用，dtb 无法按 ROM 类型改写，禁止出包"; exit 1; }
+        fdtput --version 2>&1 | head -2 || true
+
+        # ---------- 2.4 patch_dtb：按 ROM 分区类型改写 /firmware/android ----------
+        ROM_PARTITION="${ROM_PARTITION:-logical}"
+        echo "[i] ROM 分区类型: $ROM_PARTITION"
+        if [ "$ROM_PARTITION" = "logical" ]; then
+          # 动态分区 ROM：boot_devices / vbmeta / fstab 交给 vendor_boot 与 fstab.qcom，
+          # boot 内 dtb 不应再携带，否则 first-stage init 读到的分区信息与实际冲突
+          echo ">>> 动态分区 ROM：从 dtb 移除 boot_devices / vbmeta / fstab"
+          fdtput dtb /firmware/android boot_devices -d || echo "  (boot_devices 不存在，跳过)"
+          fdtput dtb /firmware/android/vbmeta compatible -d || echo "  (vbmeta compatible 不存在，跳过)"
+          fdtput dtb /firmware/android/vbmeta parts -d || echo "  (vbmeta parts 不存在，跳过)"
+          fdtput dtb -r /firmware/android/fstab || echo "  (fstab 不存在，跳过)"
+        else
+          # 静态分区 ROM：保留/补齐完整 fstab + vbmeta parts
+          echo ">>> 静态分区 ROM：保留完整 dtb（含 fstab / vbmeta）"
+          fdtput dtb /firmware/android/vbmeta compatible -ts "android,vbmeta" || true
+          fdtput dtb /firmware/android/vbmeta parts -ts "vbmeta,boot,system,vendor,dtbo" || true
+          fdtput dtb /firmware/android/fstab/compatible -ts "android,fstab" || true
+          fdtput dtb /firmware/android/fstab/vendor/compatible -ts "android,vendor" || true
+          fdtput dtb /firmware/android/fstab/vendor/dev -ts "/dev/block/platform/soc/8804000.ufshc/by-name/vendor" || true
+          fdtput dtb /firmware/android/fstab/vendor/type -ts "ext4" || true
+          fdtput dtb /firmware/android/fstab/vendor/mnt_flags -ts "ro,barrier=1,discard" || true
+          fdtput dtb /firmware/android/fstab/vendor/fsmgr_flags -ts "wait" || true
+          fdtput dtb /firmware/android/fstab/vendor/status -ts "ok" || true
+        fi
+
+        echo "----- 改写后 dtb 的 /firmware/android -----"
+        fdtdump dtb 2>/dev/null | sed -n '/firmware {/,/};/p' | head -25 || true
+
+        # ---------- 2.5 拼接 Image.gz + dtb ----------
+        cat Image.gz dtb > $KIMG
+        rm -f Image.gz dtb
+        NEWDTBSZ=$(stat -c%s "$BASE")
+        echo "[i] 拼接后 $KIMG 大小: $(stat -c%s $KIMG) B"
+
+        # ---------- 2.6 刷机脚本：对齐作者（机型校验 + dtbo 写入 + 清缓存） ----------
+        AK=$(mktemp)
+        printf '%b' "### AnyKernel3 Ramdisk Mod Script\n## osm0sis @ xda-developers\n\n### AnyKernel setup\n# global properties\nproperties() { \047\nkernel.string=Zundamon 4.14 LXC-KSU Kernel\ndo.devicecheck=1\ndo.modules=0\ndo.systemless=0\ndo.cleanup=1\ndo.cleanuponabort=0\ndevice.name1=raphael\ndevice.name2=raphaelin\nsupported.versions=11 - 16\n\047; } # end properties\n\n### AnyKernel install\n# boot shell variables\nBLOCK=/dev/block/bootdevice/by-name/boot;\nIS_SLOT_DEVICE=0;\nNO_BLOCK_DISPLAY=1;\n\n# import functions/variables and setup patching - see for reference (DO NOT REMOVE)\n. tools/ak3-core.sh;\n\n# boot install (replace kernel only, keep device ramdisk)\nsplit_boot;\nflash_boot;\n# dtbo install (write our dtbo.img back to dtbo partition)\nflash_dtbo;\n# cache clean\nclean_cache;\n" > "$AK"
+        mv -f "$AK" anykernel.sh
+        rm -f "$AK"
+        echo '--- anykernel.sh ---'
+        cat anykernel.sh
+
+        # ---------- 2.7 追加 flash_dtbo / clean_cache ----------
+        if ! grep -q '^flash_dtbo()' tools/ak3-core.sh; then
+          printf '%b' "\nflash_dtbo() { flash_generic dtbo; }\n\nclean_cache() {\n  ui_print \" \" \"Installation done. Cleaning cache...\";\n  rm -rf /cache/*;\n  rm -rf /data/dalvik-cache;\n  rm -rf /data/resource-cache;\n  rm -rf /data/system/package_cache;\n}\n" >> tools/ak3-core.sh
+          echo "[OK] 已追加 flash_dtbo / clean_cache"
+        fi
+        grep -q '^flash_dtbo()' tools/ak3-core.sh || { echo '### flash_dtbo 注入失败，禁止出包'; exit 1; }
+
+        # ---------- 2.8 携带 dtbo.img ----------
         if [ "${NEED_DTBO:-false}" = "true" ]; then
           [ -s $Q/dtbo.img ] || { echo "### dtbo.img 缺失，禁止出包"; exit 1; }
-          cp $Q/dtbo.img AnyKernel3/dtbo.img
+          cp $Q/dtbo.img dtbo.img
         fi
-        A=$(tail -c $DTBSZ AnyKernel3/$KIMG | sha256sum | cut -d' ' -f1)
-        B=$(sha256sum $BASE | cut -d' ' -f1)
-        [ "$A" = "$B" ] || { echo "### 内核段尾部 dtb 与自编译 dtb 不一致，禁止出包"; exit 1; }
+
+        # ---------- 2.9 收尾 ----------
+        rm -rf .git* README.md ramdisk modules patch
         echo "===== 卡刷包内容 ====="
-        ls -l AnyKernel3/
-        echo "===== 校验（内核镜像尾部 dtb + dtbo 同源）====="
-        sha256sum AnyKernel3/$KIMG $BASE $Q/dtbo.img 2>/dev/null | tee AnyKernel3/SHA256SUMS.txt || true
-        echo "### 内核段尾部 dtb 一致性校验通过（$DTBSZ B, $A）"
-
-        rm -rf AnyKernel3/.git* AnyKernel3/README.md
-
-        rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
-
-    
-
-    
+        ls -l
+        echo "===== 校验 ====="
+        sha256sum $KIMG dtbo.img 2>/dev/null | tee SHA256SUMS.txt || true
+        echo "### 打包完成（ROM 类型=$ROM_PARTITION，机型校验=on，dtbo 写入=on）"
 
     - name: 打包并上传
 
